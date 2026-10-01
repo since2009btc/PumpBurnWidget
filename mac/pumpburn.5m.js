@@ -66,6 +66,21 @@ const fs   = require("fs");
 
 const DIR   = path.join(os.homedir(), "Library", "Application Support", "PumpBurn");
 const STATE = path.join(DIR, "state.json");
+const PREFS = path.join(DIR, "prefs.json");     // { chart: "usd" | "pump" }
+
+function loadPrefs() {
+  try { return JSON.parse(fs.readFileSync(PREFS, "utf8")); } catch { return {}; }
+}
+
+// Clicking the chart runs this file again with --chart=usd|pump: save the choice and stop.
+const chartArg = process.argv.find(a => a.startsWith("--chart="));
+if (chartArg) {
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.writeFileSync(PREFS, JSON.stringify({ ...loadPrefs(), chart: chartArg.slice(8) === "pump" ? "pump" : "usd" }));
+  } catch { /* non-fatal */ }
+  process.exit(0);
+}
 
 // ─── pure helpers (shared with PumpBurnWidget.js, covered by test-logic.mjs) ───
 function fmt(n) {
@@ -308,24 +323,31 @@ async function getBurnRate() {
   console.log("---");
 
   // Column chart of the last 14 days, drawn as SVG (NSImage renders it natively).
+  // Bars follow the chosen unit (USD by default); the other unit is the small label.
+  const mode = loadPrefs().chart === "pump" ? "pump" : "usd";
+  const other = mode === "usd" ? "pump" : "usd";
+  const big = d => mode === "usd" ? usd(d.usd) : `${Math.round(d.pump / 1e6)}M`;
+  const small = d => mode === "usd" ? `${Math.round(d.pump / 1e6)}M` : usd(d.usd);
   const W = 760, H = 190, top = 36, bottom = 22, gap = 10;
   const colW = (W - gap) / chartDays.length;
-  const vmax = Math.max(...chartDays.map(d => d.pump || 0), 1);
+  const vmax = Math.max(...chartDays.map(d => d[mode] || 0), 1);
   const grey = "#8E8E93";
   const cols = chartDays.map((d, i) => {
     const x = gap + i * colW, bw = colW - gap, cx = x + bw / 2;
-    const h = d.pump ? (d.pump / vmax) * (H - top - bottom) : 0;
+    const h = d[mode] ? (d[mode] / vmax) * (H - top - bottom) : 0;
     const y = H - bottom - h;
     const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
     return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
-      `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d.pump ? Math.round(d.pump / 1e6) : "—"}</text>` +
-      (d.usd ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${usd(d.usd)}</text>` : "") +
+      `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d[mode] ? big(d) : "—"}</text>` +
+      (d[other] ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${small(d)}</text>` : "") +
       `<text x="${cx.toFixed(1)}" y="${H - 5}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>`;
   }).join("");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
     `<line x1="${gap}" y1="${H - bottom + 0.5}" x2="${W}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
-  head(`Daily burn, last 14 days (M PUMP and USD, UTC)`);
-  console.log(`| image=${Buffer.from(svg).toString("base64")} width=${W} height=${H}`);
+  const toggle = `bash="${process.argv[1]}" param1=--chart=${other} terminal=false refresh=true`;
+  head(`Daily burn, last 14 days (${mode === "usd" ? "USD, with M PUMP above" : "M PUMP, with USD above"}, UTC)  ·  click to switch`);
+  console.log(`| image=${Buffer.from(svg).toString("base64")} width=${W} height=${H} ${toggle}`);
+  console.log(`Show chart in ${other === "usd" ? "USD" : "PUMP"} | ${toggle} ${F}`);
   console.log("---");
 
   console.log(`Open pump.fun burn page | href=https://pump.fun/pump-token ${F}`);

@@ -14,7 +14,7 @@ home screen widget. No API key, no server, no account.
   each in PUMP, USD, SOL and % of supply
 - Average burn per day, week, month, 3 months, 6 months and year
 - Total burned, in PUMP, USD, SOL and % of the 1T supply
-- Column chart of the last 14 days
+- Column chart of the last 14 days, in USD or PUMP: click it to switch
 
 **iPhone (Scriptable, large widget)**
 
@@ -117,7 +117,8 @@ get a free key at helius.dev:
   minutes). **PUMP/hr** is the supply drop between the last two refreshes on
   the Mac, and over the last two hours on the iPhone.
 - **The chart needs SwiftBar.** It is an SVG image, which xbar may not render.
-- **Local state** (snapshots and the cached daily series) stays on the device:
+- **Local state** (snapshots, the cached daily series and the chart setting)
+  stays on the device:
   `~/Library/Application Support/PumpBurn/` on the Mac, Scriptable's documents
   folder on the iPhone.
 
