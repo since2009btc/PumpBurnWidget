@@ -130,7 +130,9 @@ function liveToday(off, todayKey, supply, prices) {
   if (!base) return null;
   const extra = Math.max(0, off.supplyAtFetch - supply);
   const extraUsd = extra * (prices.pump || 0);
-  return { pump: base.pump + extra, usd: base.usd + extraUsd, sol: base.sol + (prices.sol ? extraUsd / prices.sol : 0) };
+  // pump.fun fills in a new day's USD later than its PUMP and SOL: estimate it until then.
+  const baseUsd = base.usd || (base.sol && prices.sol ? base.sol * prices.sol : base.pump * (prices.pump || 0));
+  return { pump: base.pump + extra, usd: baseUsd + extraUsd, sol: base.sol + (prices.sol ? extraUsd / prices.sol : 0) };
 }
 
 // Supply drop against the snapshot closest to one hour ago (40-80 min window), per hour.

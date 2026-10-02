@@ -64,6 +64,8 @@ for (const [label, file, end] of [
   const midnight = Date.UTC(2026, 9, 2, 0, 0);
   const early = { fetchedAt: midnight + 10e3, supplyAtFetch: 1000e6, days: {} };
   ok('fetched just after midnight, no row yet -> counts from zero', liveToday(early, '2026-10-02', 995e6, { pump: 0.01, sol: 100 }).pump === 5e6);
+  const noUsd = { fetchedAt: midnight + 600e3, supplyAtFetch: 1000e6, days: { '2026-10-02': { pump: 554e3, usd: 0, sol: 27 } } };
+  ok('row without USD yet -> estimated from SOL', liveToday(noUsd, '2026-10-02', 1000e6, { pump: 0.0058, sol: 118 }).usd === 27 * 118);
   ok('no row and fetched late in the day -> null', liveToday({ ...early, fetchedAt: midnight + 3600e3 }, '2026-10-02', 995e6, {}) === null);
   ok('supply up (glitch) adds nothing', liveToday(off, '2026-09-27', 1001e6, { pump: 1, sol: 1 }).pump === 90e6);
 
