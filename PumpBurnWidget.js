@@ -113,8 +113,12 @@ function sumOf(arr) {
 
 // Today = pump.fun's figure at fetch time + whatever the supply dropped since then.
 // Supply only goes down through burns, so the difference is exact even across sleep.
+// Right after 00:00 UTC the page has no row for the new day yet: a fetch made in the
+// first 10 minutes counts as starting from zero.
 function liveToday(off, todayKey, supply, prices) {
-  const base = off && dayKey(off.fetchedAt) === todayKey ? off.days[todayKey] : null;
+  if (!off || dayKey(off.fetchedAt) !== todayKey) return null;
+  const sinceMidnight = off.fetchedAt - Date.parse(todayKey + "T00:00:00Z");
+  const base = off.days[todayKey] || (sinceMidnight < 10 * 60e3 ? { pump: 0, usd: 0, sol: 0 } : null);
   if (!base) return null;
   const extra = Math.max(0, off.supplyAtFetch - supply);
   const extraUsd = extra * (prices.pump || 0);
@@ -399,7 +403,10 @@ async function main() {
 
   // Official series: refetch hourly and on a new UTC day, keep the last good copy.
   let off = state.official;
-  if (!off || now - off.fetchedAt > FETCH_EVERY || dayKey(off.fetchedAt) !== todayKey) {
+  // Refetch sooner (5 min) while the page has no row for today yet.
+  const stale = !off || dayKey(off.fetchedAt) !== todayKey ||
+    now - off.fetchedAt > (off.days[todayKey] ? FETCH_EVERY : 5 * 60e3);
+  if (stale) {
     const days = await getOfficial();
     if (days) off = state.official = { fetchedAt: now, supplyAtFetch: supply, days: { ...(off?.days || {}), ...days } };
   }

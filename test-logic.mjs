@@ -61,6 +61,10 @@ for (const [label, file, end] of [
   ok('adds burns since fetch', t.pump === 100e6, fmt(t.pump));
   ok('prices the extra', Math.abs(t.usd - 450e3) < 1e-6 && Math.abs(t.sol - 3600) < 1e-6, `${t.usd} ${t.sol}`);
   ok('stale fetch (yesterday) -> null', liveToday({ ...off, fetchedAt: fetchedAt - 864e5 }, '2026-09-27', 990e6, {}) === null);
+  const midnight = Date.UTC(2026, 9, 2, 0, 0);
+  const early = { fetchedAt: midnight + 10e3, supplyAtFetch: 1000e6, days: {} };
+  ok('fetched just after midnight, no row yet -> counts from zero', liveToday(early, '2026-10-02', 995e6, { pump: 0.01, sol: 100 }).pump === 5e6);
+  ok('no row and fetched late in the day -> null', liveToday({ ...early, fetchedAt: midnight + 3600e3 }, '2026-10-02', 995e6, {}) === null);
   ok('supply up (glitch) adds nothing', liveToday(off, '2026-09-27', 1001e6, { pump: 1, sol: 1 }).pump === 90e6);
 
   console.log('--- last hour ---');

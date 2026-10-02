@@ -121,8 +121,12 @@ function sumOf(arr) {
 
 // Today = pump.fun's figure at fetch time + whatever the supply dropped since then.
 // Supply only goes down through burns, so the difference is exact even across sleep.
+// Right after 00:00 UTC the page has no row for the new day yet: a fetch made in the
+// first 10 minutes counts as starting from zero.
 function liveToday(off, todayKey, supply, prices) {
-  const base = off && dayKey(off.fetchedAt) === todayKey ? off.days[todayKey] : null;
+  if (!off || dayKey(off.fetchedAt) !== todayKey) return null;
+  const sinceMidnight = off.fetchedAt - Date.parse(todayKey + "T00:00:00Z");
+  const base = off.days[todayKey] || (sinceMidnight < 10 * 60e3 ? { pump: 0, usd: 0, sol: 0 } : null);
   if (!base) return null;
   const extra = Math.max(0, off.supplyAtFetch - supply);
   const extraUsd = extra * (prices.pump || 0);
@@ -224,7 +228,10 @@ async function getBurnRate() {
 
   // Official series: refetch hourly and on a new UTC day, keep the last good copy.
   let off = state.official;
-  if (!off || now - off.fetchedAt > FETCH_EVERY || dayKey(off.fetchedAt) !== todayKey) {
+  // Refetch sooner (5 min) while the page has no row for today yet.
+  const stale = !off || dayKey(off.fetchedAt) !== todayKey ||
+    now - off.fetchedAt > (off.days[todayKey] ? FETCH_EVERY : 5 * 60e3);
+  if (stale) {
     const days = await getOfficial();
     if (days) off = state.official = { fetchedAt: now, supplyAtFetch: supply, days: { ...(off?.days || {}), ...days } };
   }
@@ -323,31 +330,40 @@ async function getBurnRate() {
   console.log("---");
 
   // Column chart of the last 14 days, drawn as SVG (NSImage renders it natively).
-  // Bars follow the chosen unit (USD by default); the other unit is the small label.
+  // The default unit shows normally; holding ⌥ swaps in the other one (an "alternate"
+  // menu item, so the menu stays open). Clicking a chart makes its unit the default.
+  const label = m => m === "usd" ? "USD" : "PUMP";
+  const chartSvg = m => {
+    const o = m === "usd" ? "pump" : "usd";
+    const big = d => m === "usd" ? usd(d.usd) : `${Math.round(d.pump / 1e6)}M`;
+    const small = d => m === "usd" ? `${Math.round(d.pump / 1e6)}M` : usd(d.usd);
+    const W = 760, H = 190, top = 36, bottom = 22, gap = 10;
+    const colW = (W - gap) / chartDays.length;
+    const vmax = Math.max(...chartDays.map(d => d[m] || 0), 1);
+    const grey = "#8E8E93";
+    const cols = chartDays.map((d, i) => {
+      const x = gap + i * colW, bw = colW - gap, cx = x + bw / 2;
+      const h = d[m] ? (d[m] / vmax) * (H - top - bottom) : 0;
+      const y = H - bottom - h;
+      const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
+        `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d[m] ? big(d) : "—"}</text>` +
+        (d[o] ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${small(d)}</text>` : "") +
+        `<text x="${cx.toFixed(1)}" y="${H - 5}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>`;
+    }).join("");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+      `<line x1="${gap}" y1="${H - bottom + 0.5}" x2="${W}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
+    return `image=${Buffer.from(svg).toString("base64")} width=${W} height=${H}`;
+  };
   const mode = loadPrefs().chart === "pump" ? "pump" : "usd";
   const other = mode === "usd" ? "pump" : "usd";
-  const big = d => mode === "usd" ? usd(d.usd) : `${Math.round(d.pump / 1e6)}M`;
-  const small = d => mode === "usd" ? `${Math.round(d.pump / 1e6)}M` : usd(d.usd);
-  const W = 760, H = 190, top = 36, bottom = 22, gap = 10;
-  const colW = (W - gap) / chartDays.length;
-  const vmax = Math.max(...chartDays.map(d => d[mode] || 0), 1);
-  const grey = "#8E8E93";
-  const cols = chartDays.map((d, i) => {
-    const x = gap + i * colW, bw = colW - gap, cx = x + bw / 2;
-    const h = d[mode] ? (d[mode] / vmax) * (H - top - bottom) : 0;
-    const y = H - bottom - h;
-    const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
-    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
-      `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d[mode] ? big(d) : "—"}</text>` +
-      (d[other] ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${small(d)}</text>` : "") +
-      `<text x="${cx.toFixed(1)}" y="${H - 5}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>`;
-  }).join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
-    `<line x1="${gap}" y1="${H - bottom + 0.5}" x2="${W}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
-  const toggle = `bash="${process.argv[1]}" param1=--chart=${other} terminal=false refresh=true`;
-  head(`Daily burn, last 14 days (${mode === "usd" ? "USD, with M PUMP above" : "M PUMP, with USD above"}, UTC)  ·  click to switch`);
-  console.log(`| image=${Buffer.from(svg).toString("base64")} width=${W} height=${H} ${toggle}`);
-  console.log(`Show chart in ${other === "usd" ? "USD" : "PUMP"} | ${toggle} ${F}`);
+  const setDefault = m => `bash="${process.argv[1]}" param1=--chart=${m} terminal=false refresh=true`;
+  const title = (m, alt) => `Daily burn, last 14 days in ${label(m)}, UTC  ·  ` +
+    (alt ? `click to keep ${label(m)}` : `hold ⌥ for ${label(m === "usd" ? "pump" : "usd")}`);
+  console.log(`${title(mode, false)} | ${F} color=#9AA0A7`);
+  console.log(`${title(other, true)} | ${F} color=#9AA0A7 alternate=true ${setDefault(other)}`);
+  console.log(`| ${chartSvg(mode)}`);
+  console.log(`| ${chartSvg(other)} alternate=true ${setDefault(other)}`);
   console.log("---");
 
   console.log(`Open pump.fun burn page | href=https://pump.fun/pump-token ${F}`);
