@@ -366,6 +366,7 @@ async function getBurnRate() {
   console.log(`${title(other, true)} | ${F} color=#9AA0A7 alternate=true ${setDefault(other)}`);
   console.log(`| ${chartSvg(mode)}`);
   console.log(`| ${chartSvg(other)} alternate=true ${setDefault(other)}`);
+  console.log(`Show chart in ${label(other)}  (or hold ⌥ to peek) | ${setDefault(other)} ${F}`);
   console.log("---");
 
   console.log(`Open pump.fun burn page | href=https://pump.fun/pump-token ${F}`);
