@@ -338,17 +338,27 @@ async function getBurnRate() {
   const chartSvg = m => {
     const o = m === "usd" ? "pump" : "usd";
     // Compact labels so all 30 fit: no "$" (the title names the unit), 3 significant digits.
+    const grey = "#8E8E93";
     const compact = v => v >= 1e7 ? Math.round(v / 1e6) + "M" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.round(v / 1e3) + "K";
     const big = d => compact(d[m]);
     const small = d => compact(d[o]);
-    const W = 760, H = 190, top = 26, bottom = 20, gap = 3, side = 20;
-    const colW = (W - 2 * side) / chartDays.length;
+    const W = 760, H = 190, top = 26, bottom = 20, gap = 3, side = 44, right = 8;
+    const colW = (W - side - right) / chartDays.length;
     const vals = chartDays.map(d => d[m] || 0);
-    const vmax = Math.max(...vals, 1);
-    const grey = "#8E8E93";
+    // Y scale: round step (1, 2, 2.5 or 5 × 10^n) giving about 4 gridlines.
+    const raw = Math.max(...vals, 1) / 4, p10 = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 2.5, 5, 10].map(k => k * p10).find(v => v >= raw);
+    const vmax = Math.ceil(Math.max(...vals, 1) / step) * step;
+    const plotH = H - top - bottom;
+    const axis = [];
+    for (let v = 0; v <= vmax + step / 2; v += step) {
+      const gy = H - bottom - (v / vmax) * plotH;
+      axis.push(`<line x1="${side}" y1="${gy.toFixed(1)}" x2="${W - right}" y2="${gy.toFixed(1)}" stroke="${grey}" stroke-opacity="${v ? 0.15 : 0.4}"/>` +
+        `<text x="${side - 6}" y="${(gy + 3).toFixed(1)}" font-family="Menlo" font-size="9" fill="${grey}" text-anchor="end">${v ? (m === "usd" ? "$" : "") + compact(v).replace(/(\.\d*?)0+M$/, "$1M").replace(/\.M$/, "M") : "0"}</text>`);
+    }
     const cols = chartDays.map((d, i) => {
       const x = side + i * colW + gap / 2, bw = colW - gap, cx = x + bw / 2;
-      const h = d[m] ? (d[m] / vmax) * (H - top - bottom) : 0;
+      const h = d[m] ? (d[m] / vmax) * plotH : 0;
       const y = H - bottom - h;
       const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
@@ -357,7 +367,7 @@ async function getBurnRate() {
         `<text x="${cx.toFixed(1)}" y="${H - 7}" font-family="Menlo" font-size="9" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>`;
     }).join("");
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
-      `<line x1="${side}" y1="${H - bottom + 0.5}" x2="${W - side}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
+      `${axis.join("")}${cols}</svg>`;
     return `image=${Buffer.from(svg).toString("base64")} width=${W} height=${H}`;
   };
   const mode = loadPrefs().chart === "pump" ? "pump" : "usd";
