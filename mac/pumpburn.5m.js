@@ -337,27 +337,24 @@ async function getBurnRate() {
   const label = m => m === "usd" ? "USD" : "PUMP";
   const chartSvg = m => {
     const o = m === "usd" ? "pump" : "usd";
-    const big = d => m === "usd" ? usd(d.usd) : `${Math.round(d.pump / 1e6)}M`;
-    const small = d => m === "usd" ? `${Math.round(d.pump / 1e6)}M` : usd(d.usd);
-    const W = 760, H = 190, top = 36, bottom = 22, gap = 4, side = 30;
+    // Compact labels so all 30 fit: no "$" (the title names the unit), 3 significant digits.
+    const compact = v => v >= 1e7 ? Math.round(v / 1e6) + "M" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.round(v / 1e3) + "K";
+    const big = d => compact(d[m]);
+    const small = d => compact(d[o]);
+    const W = 760, H = 190, top = 26, bottom = 20, gap = 3, side = 20;
     const colW = (W - 2 * side) / chartDays.length;
     const vals = chartDays.map(d => d[m] || 0);
     const vmax = Math.max(...vals, 1);
-    const known = vals.filter(v => v > 0);
-    const vmin = known.length ? Math.min(...known) : 0;
-    // 30 columns leave no room for a value on each: label the highest, the lowest and yesterday.
-    const labelled = new Set([vals.indexOf(vmax), vals.indexOf(vmin), chartDays.length - 1]);
     const grey = "#8E8E93";
     const cols = chartDays.map((d, i) => {
       const x = side + i * colW + gap / 2, bw = colW - gap, cx = x + bw / 2;
       const h = d[m] ? (d[m] / vmax) * (H - top - bottom) : 0;
       const y = H - bottom - h;
       const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
-      const tick = i % 2 === (chartDays.length - 1) % 2;   // every other day, always the last
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
-        (labelled.has(i) && d[m] ? `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${big(d)}</text>` : "") +
-        (labelled.has(i) && d[o] ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${small(d)}</text>` : "") +
-        (tick ? `<text x="${cx.toFixed(1)}" y="${H - 5}" font-family="Menlo" font-size="11" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>` : "");
+        (d[m] ? `<text x="${cx.toFixed(1)}" y="${(y - 4).toFixed(1)}" font-family="Menlo" font-size="7.5" fill="${grey}" text-anchor="middle">${big(d)}</text>` : "") +
+        (d[o] ? `<text x="${cx.toFixed(1)}" y="${(y - 13).toFixed(1)}" font-family="Menlo" font-size="6.5" fill="${grey}" fill-opacity="0.7" text-anchor="middle">${small(d)}</text>` : "") +
+        `<text x="${cx.toFixed(1)}" y="${H - 7}" font-family="Menlo" font-size="9" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>`;
     }).join("");
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
       `<line x1="${side}" y1="${H - bottom + 0.5}" x2="${W - side}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
