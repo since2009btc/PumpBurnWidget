@@ -5,6 +5,8 @@ home screen widget. No API key, no server, no account.
 
 > Informational tool. Not financial advice, not affiliated with pump.fun.
 
+![The Mac menu bar plugin: price, burned and average tables, 30-day daily chart and hourly chart](docs/mac-menu.png)
+
 ## What it shows
 
 **Mac (SwiftBar menu bar)**
