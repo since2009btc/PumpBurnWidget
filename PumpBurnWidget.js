@@ -138,6 +138,42 @@ function lastHourFrom(snaps, now, supply, prices) {
   return { pump: p, usd: u, sol: prices.sol ? u / prices.sol : null };
 }
 
+// Burn per UTC hour from the local supply snapshots. Each pair of snapshots up to
+// 15 min apart is spread over the hours it spans; an hour counts once it has 30+
+// minutes of coverage and is scaled to a full hour. Returns, per hour 0-23, the
+// average over the previous `days` UTC days, how many days fed it, and today's value.
+function hourlyFromSnaps(snaps, now, days = 30) {
+  const buckets = {};
+  for (let i = 1; i < snaps.length; i++) {
+    const [t0, s0, p0] = snaps[i - 1], [t1, s1, p1] = snaps[i];
+    const dt = t1 - t0;
+    if (dt <= 0 || dt > 15 * 60e3) continue;
+    const burned = Math.max(0, s0 - s1), price = (p0 + p1) / 2;
+    for (let a = t0; a < t1;) {
+      const b = Math.min(t1, (Math.floor(a / 3600e3) + 1) * 3600e3);
+      const k = Math.floor(a / 3600e3);
+      const x = buckets[k] || (buckets[k] = { pump: 0, usd: 0, ms: 0 });
+      const f = (b - a) / dt;
+      x.pump += burned * f; x.usd += burned * f * price; x.ms += b - a;
+      a = b;
+    }
+  }
+  const todayStart = Date.parse(dayKey(now) + "T00:00:00Z");
+  const sum = Array.from({ length: 24 }, () => ({ pump: 0, usd: 0, n: 0 }));
+  const today = Array(24).fill(null);
+  for (const [k, x] of Object.entries(buckets)) {
+    const start = k * 3600e3, h = new Date(start).getUTCHours();
+    const scale = 3600e3 / x.ms;
+    if (start >= todayStart) {
+      if (x.ms >= 10 * 60e3) today[h] = { pump: x.pump * scale, usd: x.usd * scale };
+    } else if (start >= todayStart - days * 864e5 && x.ms >= 30 * 60e3) {
+      sum[h].pump += x.pump * scale; sum[h].usd += x.usd * scale; sum[h].n++;
+    }
+  }
+  const avg = sum.map(x => x.n ? { pump: x.pump / x.n, usd: x.usd / x.n } : null);
+  return { avg, n: sum.map(x => x.n), today };
+}
+
 async function rpc(method, params) {
   const r = new Request(RPC);
   r.method = "POST";

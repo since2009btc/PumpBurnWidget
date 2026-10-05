@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 async function load(file, endMarker) {
   const src = readFileSync(file, 'utf8');
   const block = src.slice(src.indexOf('function fmt(n)'), src.indexOf(endMarker));
-  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom'];
+  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps'];
   return import('data:text/javascript,' + encodeURIComponent(`${block}\nexport { ${names.join(', ')} };`));
 }
 
@@ -23,7 +23,7 @@ for (const [label, file, end] of [
   ['iPhone', 'PumpBurnWidget.js', 'async function rpc('],
   ['Mac', 'mac/pumpburn.5m.js', 'const pad = '],
 ]) {
-  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom } = await load(file, end);
+  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps } = await load(file, end);
   console.log(`\n=== ${label} (${file}) ===`);
 
   console.log('--- formatting ---');
@@ -75,6 +75,22 @@ for (const [label, file, end] of [
   const h = lastHourFrom(snaps, now, 800, { pump: 0.01, sol: 100 });
   ok('uses the snapshot nearest to -60 min, per hour', Math.abs(h.pump - 100 * 60 / 58) < 1e-9, h && h.pump);
   ok('no snapshot in 40-80 min -> null', lastHourFrom([[now - 10 * 60e3, 1, 1]], now, 1, {}) === null);
+
+  console.log('--- hourly profile ---');
+  // 3 past days + today until 10:30 UTC, a snapshot every 5 min, 1M PUMP burned per 5 min at $0.01
+  const start = Date.UTC(2026, 9, 2, 0, 0), snapsH = [];
+  let sup = 1e12;
+  for (let t = start; t <= Date.UTC(2026, 9, 5, 10, 30); t += 5 * 60e3) { snapsH.push([t, sup, 0.01]); sup -= 1e6; }
+  const hp = hourlyFromSnaps(snapsH, Date.UTC(2026, 9, 5, 10, 30));
+  ok('average = 12M PUMP per hour', Math.abs(hp.avg[5].pump - 12e6) < 1, hp.avg[5] && hp.avg[5].pump);
+  ok('USD priced per snapshot', Math.abs(hp.avg[5].usd - 12e6 * 0.01) < 1e-3, hp.avg[5] && hp.avg[5].usd);
+  ok('three past days per hour', hp.n[0] === 3 && hp.n[23] === 3, hp.n.join(','));
+  ok('today filled up to 10:00, scaled to a full hour', Math.abs(hp.today[9].pump - 12e6) < 1 && Math.abs(hp.today[10].pump - 12e6) < 1, hp.today[10] && hp.today[10].pump);
+  ok('today empty after now', hp.today[11] === null);
+  // a 2-hour sleep gap: those hours are skipped, not averaged in as zero
+  const gapped = snapsH.filter(x => x[0] < Date.UTC(2026, 9, 3, 6, 0) || x[0] >= Date.UTC(2026, 9, 3, 8, 0));
+  const hg = hourlyFromSnaps(gapped, Date.UTC(2026, 9, 5, 10, 30));
+  ok('sleep gap leaves those hours out', hg.n[6] === 2 && hg.n[7] === 2 && Math.abs(hg.avg[6].pump - 12e6) < 1, hg.n.slice(5, 9).join(','));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

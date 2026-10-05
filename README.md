@@ -16,6 +16,7 @@ home screen widget. No API key, no server, no account.
 - Total burned, in PUMP, USD, SOL and % of the 1T supply
 - Column chart of the last 30 days, in USD or PUMP: hold ⌥ to peek at the other
   unit, or click "Show chart in …" to switch
+- Hourly burn by UTC hour: the average of the last 30 days, with today on top
 
 **iPhone (Scriptable, large widget)**
 
@@ -117,7 +118,11 @@ get a free key at helius.dev:
 - **Burns/hr** is measured over the burner's last 300 transactions (about 15–20
   minutes). **PUMP/hr** is the supply drop between the last two refreshes on
   the Mac, and over the last two hours on the iPhone.
-- **The chart needs SwiftBar.** It is an SVG image, which xbar may not render.
+- **The hourly chart is measured by the plugin itself** from the supply every
+  refresh, because no source publishes hourly figures. It only covers hours
+  when the Mac was awake (an hour needs 30+ minutes of data), and the 30-day
+  average fills up over the first month after install.
+- **The charts need SwiftBar.** They are SVG images, which xbar may not render.
 - **Local state** (snapshots, the cached daily series and the chart setting)
   stays on the device:
   `~/Library/Application Support/PumpBurn/` on the Mac, Scriptable's documents

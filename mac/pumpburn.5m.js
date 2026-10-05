@@ -21,7 +21,7 @@ const MINT     = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const BURNER   = "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c";
 const TOTAL    = 1e12;
-const KEEP_DAYS = 3;            // local snapshots: only for "last hour" and live rate
+const KEEP_DAYS = 31;           // local snapshots: last hour, live rate, hourly profile
 const PAGE = "https://pump.fun/pump-token";
 const FETCH_EVERY = 60 * 60e3;  // the page is ~2 MB: refetch at most hourly
 
@@ -146,6 +146,42 @@ function lastHourFrom(snaps, now, supply, prices) {
   return { pump: p, usd: u, sol: prices.sol ? u / prices.sol : null };
 }
 
+// Burn per UTC hour from the local supply snapshots. Each pair of snapshots up to
+// 15 min apart is spread over the hours it spans; an hour counts once it has 30+
+// minutes of coverage and is scaled to a full hour. Returns, per hour 0-23, the
+// average over the previous `days` UTC days, how many days fed it, and today's value.
+function hourlyFromSnaps(snaps, now, days = 30) {
+  const buckets = {};
+  for (let i = 1; i < snaps.length; i++) {
+    const [t0, s0, p0] = snaps[i - 1], [t1, s1, p1] = snaps[i];
+    const dt = t1 - t0;
+    if (dt <= 0 || dt > 15 * 60e3) continue;
+    const burned = Math.max(0, s0 - s1), price = (p0 + p1) / 2;
+    for (let a = t0; a < t1;) {
+      const b = Math.min(t1, (Math.floor(a / 3600e3) + 1) * 3600e3);
+      const k = Math.floor(a / 3600e3);
+      const x = buckets[k] || (buckets[k] = { pump: 0, usd: 0, ms: 0 });
+      const f = (b - a) / dt;
+      x.pump += burned * f; x.usd += burned * f * price; x.ms += b - a;
+      a = b;
+    }
+  }
+  const todayStart = Date.parse(dayKey(now) + "T00:00:00Z");
+  const sum = Array.from({ length: 24 }, () => ({ pump: 0, usd: 0, n: 0 }));
+  const today = Array(24).fill(null);
+  for (const [k, x] of Object.entries(buckets)) {
+    const start = k * 3600e3, h = new Date(start).getUTCHours();
+    const scale = 3600e3 / x.ms;
+    if (start >= todayStart) {
+      if (x.ms >= 10 * 60e3) today[h] = { pump: x.pump * scale, usd: x.usd * scale };
+    } else if (start >= todayStart - days * 864e5 && x.ms >= 30 * 60e3) {
+      sum[h].pump += x.pump * scale; sum[h].usd += x.usd * scale; sum[h].n++;
+    }
+  }
+  const avg = sum.map(x => x.n ? { pump: x.pump / x.n, usd: x.usd / x.n } : null);
+  return { avg, n: sum.map(x => x.n), today };
+}
+
 const pad = (s, n) => String(s).padEnd(n);
 
 async function rpc(method, params) {
@@ -262,6 +298,7 @@ async function getBurnRate() {
 
   const today = liveToday(off, todayKey, supply, prices);
   const lastHour = lastHourFrom(state.snaps, now, supply, prices);
+  const hourly = hourlyFromSnaps(state.snaps, now);
 
   let pumpHr = null;
   const n = state.snaps.length;
@@ -335,27 +372,33 @@ async function getBurnRate() {
   // The default unit shows normally; holding ⌥ swaps in the other one (an "alternate"
   // menu item, so the menu stays open). Clicking a chart makes its unit the default.
   const label = m => m === "usd" ? "USD" : "PUMP";
+  const grey = "#8E8E93";
+  // Compact labels so many columns fit: no "$" (the title names the unit), 3 significant digits.
+  const compact = v => v >= 1e7 ? Math.round(v / 1e6) + "M" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.round(v / 1e3) + "K";
+  const axisLabel = (v, m) => v ? (m === "usd" ? "$" : "") + compact(v).replace(/(\.\d*?)0+M$/, "$1M").replace(/\.M$/, "M") : "0";
+  // Y scale: round step (1, 2, 2.5 or 5 × 10^n) giving about 4 gridlines.
+  const yScale = (maxVal, m, geo) => {
+    const raw = Math.max(maxVal, 1) / 4, p10 = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 2.5, 5, 10].map(k => k * p10).find(v => v >= raw);
+    const top = Math.ceil(Math.max(maxVal, 1) / step) * step;
+    const lines = [];
+    for (let v = 0; v <= top + step / 2; v += step) {
+      const gy = geo.H - geo.bottom - (v / top) * geo.plotH;
+      lines.push(`<line x1="${geo.side}" y1="${gy.toFixed(1)}" x2="${geo.W - geo.right}" y2="${gy.toFixed(1)}" stroke="${grey}" stroke-opacity="${v ? 0.15 : 0.4}"/>` +
+        `<text x="${geo.side - 6}" y="${(gy + 3).toFixed(1)}" font-family="Menlo" font-size="9" fill="${grey}" text-anchor="end">${axisLabel(v, m)}</text>`);
+    }
+    return { top, svg: lines.join("") };
+  };
   const chartSvg = m => {
     const o = m === "usd" ? "pump" : "usd";
-    // Compact labels so all 30 fit: no "$" (the title names the unit), 3 significant digits.
-    const grey = "#8E8E93";
-    const compact = v => v >= 1e7 ? Math.round(v / 1e6) + "M" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.round(v / 1e3) + "K";
     const big = d => compact(d[m]);
     const small = d => compact(d[o]);
     const W = 760, H = 190, top = 26, bottom = 20, gap = 3, side = 44, right = 8;
     const colW = (W - side - right) / chartDays.length;
     const vals = chartDays.map(d => d[m] || 0);
-    // Y scale: round step (1, 2, 2.5 or 5 × 10^n) giving about 4 gridlines.
-    const raw = Math.max(...vals, 1) / 4, p10 = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 2.5, 5, 10].map(k => k * p10).find(v => v >= raw);
-    const vmax = Math.ceil(Math.max(...vals, 1) / step) * step;
     const plotH = H - top - bottom;
-    const axis = [];
-    for (let v = 0; v <= vmax + step / 2; v += step) {
-      const gy = H - bottom - (v / vmax) * plotH;
-      axis.push(`<line x1="${side}" y1="${gy.toFixed(1)}" x2="${W - right}" y2="${gy.toFixed(1)}" stroke="${grey}" stroke-opacity="${v ? 0.15 : 0.4}"/>` +
-        `<text x="${side - 6}" y="${(gy + 3).toFixed(1)}" font-family="Menlo" font-size="9" fill="${grey}" text-anchor="end">${v ? (m === "usd" ? "$" : "") + compact(v).replace(/(\.\d*?)0+M$/, "$1M").replace(/\.M$/, "M") : "0"}</text>`);
-    }
+    const ys = yScale(Math.max(...vals), m, { W, H, bottom, side, right, plotH });
+    const vmax = ys.top, axis = [ys.svg];
     const cols = chartDays.map((d, i) => {
       const x = side + i * colW + gap / 2, bw = colW - gap, cx = x + bw / 2;
       const h = d[m] ? (d[m] / vmax) * plotH : 0;
@@ -380,6 +423,36 @@ async function getBurnRate() {
   console.log(`| ${chartSvg(mode)}`);
   console.log(`| ${chartSvg(other)} alternate=true ${setDefault(other)}`);
   console.log(`Show chart in ${label(other)}  (or hold ⌥ to peek) | ${setDefault(other)} ${F}`);
+  console.log("---");
+
+  // Hourly profile: average per UTC hour (light) with today overlaid (solid).
+  const daysUsed = Math.max(...hourly.n);
+  const hourSvg = m => {
+    const W = 760, H = 150, top = 14, bottom = 20, side = 44, right = 8, gap = 4;
+    const plotH = H - top - bottom, colW = (W - side - right) / 24;
+    const vals = [...hourly.avg, ...hourly.today].map(x => x ? x[m] : 0);
+    const ys = yScale(Math.max(...vals), m, { W, H, bottom, side, right, plotH });
+    const bar = (v, x, w, fill, op) => {
+      const h = (v / ys.top) * plotH;
+      return `<rect x="${x.toFixed(1)}" y="${(H - bottom - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="${fill}" fill-opacity="${op}"/>`;
+    };
+    const cols = Array.from({ length: 24 }, (_, h) => {
+      const x = side + h * colW + gap / 2, bw = colW - gap, cx = x + bw / 2;
+      const a = hourly.avg[h], t = hourly.today[h];
+      return (a ? bar(a[m], x, bw, "#E3A857", 0.3) : "") +
+        (t ? bar(t[m], x + bw * 0.25, bw * 0.5, "#E3A857", 1) : "") +
+        (h % 2 === 0 ? `<text x="${cx.toFixed(1)}" y="${H - 7}" font-family="Menlo" font-size="9" fill="${grey}" text-anchor="middle">${String(h).padStart(2, "0")}</text>` : "");
+    }).join("");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${ys.svg}${cols}</svg>`;
+    return `image=${Buffer.from(svg).toString("base64")} width=${W} height=${H}`;
+  };
+  const hourTitle = m => `Hourly burn in ${label(m)}, UTC  ·  light: average of ${daysUsed} day${daysUsed === 1 ? "" : "s"}  ·  solid: today`;
+  if (daysUsed || hourly.today.some(Boolean)) {
+    console.log(`${hourTitle(mode)} | ${F} color=#9AA0A7`);
+    console.log(`${hourTitle(other)} | ${F} color=#9AA0A7 alternate=true ${setDefault(other)}`);
+    console.log(`| ${hourSvg(mode)}`);
+    console.log(`| ${hourSvg(other)} alternate=true ${setDefault(other)}`);
+  }
   console.log("---");
 
   console.log(`Open pump.fun burn page | href=https://pump.fun/pump-token ${F}`);
