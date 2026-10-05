@@ -7,7 +7,7 @@
 // Tracks pump.fun's buy-and-burn programme:
 //   - PUMP burned today (UTC), growing in real time
 //   - yesterday, last 7 and last 30 days, in PUMP / USD / % of supply
-//   - daily burns for the last 14 days
+//   - daily burns for the last 30 days
 //   - cumulative total burned and % of the 1T supply
 //   - PUMP price and live burn rate
 //
@@ -311,11 +311,11 @@ function buildWidget(d) {
 
   w.addSpacer(11);
 
-  // last 14 days, zero-based so the heights compare honestly
+  // last 30 days, zero-based so the heights compare honestly
   const vmax = Math.max(...d.chart.map(x => x.pump || 0), 1);
   const bars = w.addStack();
   bars.bottomAlignContent();
-  const gapB = 3;
+  const gapB = 2;
   const bw = (W - (d.chart.length - 1) * gapB) / d.chart.length;
   d.chart.forEach((x, i) => {
     if (i) bars.addSpacer(gapB);
@@ -332,7 +332,11 @@ function buildWidget(d) {
     const t = ticks.addStack();
     t.size = new Size(bw, 12);
     t.centerAlignContent();
-    const lab = t.addText(i % 2 === d.chart.length % 2 ? "" : String(Number(x.key.slice(-2))));
+    // a date every 5 days, counted back from yesterday so the last column is always labelled
+    const show = (d.chart.length - 1 - i) % 5 === 0;
+    const lab = t.addText(show ? String(Number(x.key.slice(-2))) : "");
+    lab.lineLimit = 1;
+    lab.minimumScaleFactor = 0.5;
     lab.font = mono(9);
     lab.textColor = col(C.faint);
   });
@@ -444,7 +448,7 @@ async function main() {
     pctTotal: (burnedTotal / TOTAL) * 100,
     today, avg30: w30.n ? w30.pump / w30.n : null,
     y1, w7, w30, supply,
-    chart: lastN(14), pumpHr, cyclesHr, prices,
+    chart: lastN(30), pumpHr, cyclesHr, prices,
     stale: prices.pump === null || !off || now - off.fetchedAt > 6 * 3600e3,
   });
 }

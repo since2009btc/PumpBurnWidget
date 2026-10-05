@@ -14,13 +14,14 @@ home screen widget. No API key, no server, no account.
   each in PUMP, USD, SOL and % of supply
 - Average burn per day, week, month, 3 months, 6 months and year
 - Total burned, in PUMP, USD, SOL and % of the 1T supply
-- Column chart of the last 14 days, in USD or PUMP: click it to switch
+- Column chart of the last 30 days, in USD or PUMP: hold ⌥ to peek at the other
+  unit, or click "Show chart in …" to switch
 
 **iPhone (Scriptable, large widget)**
 
 - PUMP burned today, with USD, SOL and % of the 30-day daily average
 - Yesterday, last 7 and last 30 days, in PUMP, USD and % of supply
-- Column chart of the last 14 days
+- Column chart of the last 30 days
 - Total burned, PUMP price and live burn rate
 
 ## Where the numbers come from

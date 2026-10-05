@@ -7,7 +7,7 @@
 //
 //  <xbar.title>PUMP buy & burn</xbar.title>
 //  <xbar.version>v2.0</xbar.version>
-//  <xbar.desc>Tracks pump.fun's buy-and-burn: burned today/7d/30d/6m, averages, price, 14-day chart.</xbar.desc>
+//  <xbar.desc>Tracks pump.fun's buy-and-burn: burned today/7d/30d/6m, averages, price, 30-day chart.</xbar.desc>
 //  <xbar.dependencies>node</xbar.dependencies>
 //
 //  SwiftBar / xbar plugin. No API key required.
@@ -249,7 +249,7 @@ async function getBurnRate() {
     for (let i = days; i >= 1; i--) out.push(dayFor(shiftKey(todayKey, -i)));
     return out;
   };
-  const chartDays = lastN(14);
+  const chartDays = lastN(30);
   const windows = [["Last 7 days", 7], ["Last 30 days", 30], ["Last 3 months", 90], ["Last 6 months", 180]]
     .map(([label, d]) => ({ label, d, ...sumOf(lastN(d)) }));
 
@@ -331,7 +331,7 @@ async function getBurnRate() {
   console.log(`${pad("Total burned", 15)}${totBits.join("  ·  ")} | ${F}`);
   console.log("---");
 
-  // Column chart of the last 14 days, drawn as SVG (NSImage renders it natively).
+  // Column chart of the last 30 days, drawn as SVG (NSImage renders it natively).
   // The default unit shows normally; holding ⌥ swaps in the other one (an "alternate"
   // menu item, so the menu stays open). Clicking a chart makes its unit the default.
   const label = m => m === "usd" ? "USD" : "PUMP";
@@ -339,28 +339,34 @@ async function getBurnRate() {
     const o = m === "usd" ? "pump" : "usd";
     const big = d => m === "usd" ? usd(d.usd) : `${Math.round(d.pump / 1e6)}M`;
     const small = d => m === "usd" ? `${Math.round(d.pump / 1e6)}M` : usd(d.usd);
-    const W = 760, H = 190, top = 36, bottom = 22, gap = 10;
-    const colW = (W - gap) / chartDays.length;
-    const vmax = Math.max(...chartDays.map(d => d[m] || 0), 1);
+    const W = 760, H = 190, top = 36, bottom = 22, gap = 4, side = 30;
+    const colW = (W - 2 * side) / chartDays.length;
+    const vals = chartDays.map(d => d[m] || 0);
+    const vmax = Math.max(...vals, 1);
+    const known = vals.filter(v => v > 0);
+    const vmin = known.length ? Math.min(...known) : 0;
+    // 30 columns leave no room for a value on each: label the highest, the lowest and yesterday.
+    const labelled = new Set([vals.indexOf(vmax), vals.indexOf(vmin), chartDays.length - 1]);
     const grey = "#8E8E93";
     const cols = chartDays.map((d, i) => {
-      const x = gap + i * colW, bw = colW - gap, cx = x + bw / 2;
+      const x = side + i * colW + gap / 2, bw = colW - gap, cx = x + bw / 2;
       const h = d[m] ? (d[m] / vmax) * (H - top - bottom) : 0;
       const y = H - bottom - h;
       const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
+      const tick = i % 2 === (chartDays.length - 1) % 2;   // every other day, always the last
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
-        `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d[m] ? big(d) : "—"}</text>` +
-        (d[o] ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${small(d)}</text>` : "") +
-        `<text x="${cx.toFixed(1)}" y="${H - 5}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>`;
+        (labelled.has(i) && d[m] ? `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" font-family="Menlo" font-size="12" fill="${grey}" text-anchor="middle">${big(d)}</text>` : "") +
+        (labelled.has(i) && d[o] ? `<text x="${cx.toFixed(1)}" y="${(y - 19).toFixed(1)}" font-family="Menlo" font-size="10" fill="${grey}" fill-opacity="0.75" text-anchor="middle">${small(d)}</text>` : "") +
+        (tick ? `<text x="${cx.toFixed(1)}" y="${H - 5}" font-family="Menlo" font-size="11" fill="${grey}" text-anchor="middle">${d.key.slice(8)}</text>` : "");
     }).join("");
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
-      `<line x1="${gap}" y1="${H - bottom + 0.5}" x2="${W}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
+      `<line x1="${side}" y1="${H - bottom + 0.5}" x2="${W - side}" y2="${H - bottom + 0.5}" stroke="${grey}" stroke-opacity="0.4"/>${cols}</svg>`;
     return `image=${Buffer.from(svg).toString("base64")} width=${W} height=${H}`;
   };
   const mode = loadPrefs().chart === "pump" ? "pump" : "usd";
   const other = mode === "usd" ? "pump" : "usd";
   const setDefault = m => `bash="${process.argv[1]}" param1=--chart=${m} terminal=false refresh=true`;
-  const title = (m, alt) => `Daily burn, last 14 days in ${label(m)}, UTC  ·  ` +
+  const title = (m, alt) => `Daily burn, last 30 days in ${label(m)}, UTC  ·  ` +
     (alt ? `click to keep ${label(m)}` : `hold ⌥ for ${label(m === "usd" ? "pump" : "usd")}`);
   console.log(`${title(mode, false)} | ${F} color=#9AA0A7`);
   console.log(`${title(other, true)} | ${F} color=#9AA0A7 alternate=true ${setDefault(other)}`);
