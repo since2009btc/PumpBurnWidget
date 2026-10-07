@@ -174,6 +174,15 @@ function hourlyFromSnaps(snaps, now, days = 30) {
   return { avg, n: sum.map(x => x.n), today };
 }
 
+// Today against the 30-day pace: the daily average scaled to the share of the UTC day
+// already gone, so at 06:00 UTC today is compared with a quarter of an average day.
+// null in the first 30 minutes, when the comparison is noise.
+function paceVsAvg(todayPump, dailyAvg, now) {
+  const elapsed = (now - Date.parse(dayKey(now) + "T00:00:00Z")) / 864e5;
+  if (!dailyAvg || elapsed < 1 / 48) return null;
+  return todayPump / (dailyAvg * elapsed) * 100;
+}
+
 async function rpc(method, params) {
   const r = new Request(RPC);
   r.method = "POST";
@@ -314,7 +323,8 @@ function buildWidget(d) {
 
   const sub = [];
   if (d.today) sub.push(Math.round(d.today.sol).toLocaleString("en-US") + " SOL spent");
-  if (d.today && d.avg30) sub.push(Math.round((d.today.pump / d.avg30) * 100) + "% of 30d avg");
+  const pace = d.today && d.avg30 ? paceVsAvg(d.today.pump, d.avg30, Date.now()) : null;
+  if (pace !== null) sub.push(Math.round(pace) + "% of 30d pace");
   num(w, sub.length ? sub.join("  ·  ") : "waiting for pump.fun data…", 11, C.dim);
 
   w.addSpacer(11);

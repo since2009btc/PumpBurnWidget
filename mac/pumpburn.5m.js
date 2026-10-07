@@ -182,6 +182,15 @@ function hourlyFromSnaps(snaps, now, days = 30) {
   return { avg, n: sum.map(x => x.n), today };
 }
 
+// Today against the 30-day pace: the daily average scaled to the share of the UTC day
+// already gone, so at 06:00 UTC today is compared with a quarter of an average day.
+// null in the first 30 minutes, when the comparison is noise.
+function paceVsAvg(todayPump, dailyAvg, now) {
+  const elapsed = (now - Date.parse(dayKey(now) + "T00:00:00Z")) / 864e5;
+  if (!dailyAvg || elapsed < 1 / 48) return null;
+  return todayPump / (dailyAvg * elapsed) * 100;
+}
+
 const pad = (s, n) => String(s).padEnd(n);
 
 async function rpc(method, params) {
@@ -347,7 +356,8 @@ async function getBurnRate() {
   head("Burned");
   row("Last hour", lastHour);
   const w30 = windows[1];
-  row("Today (UTC)", today, today && w30.n ? `  ·  ${Math.round(today.pump / (w30.pump / w30.n) * 100)}% of 30d daily avg` : "");
+  const pace = today && w30.n ? paceVsAvg(today.pump, w30.pump / w30.n, now) : null;
+  row("Today (UTC)", today, pace !== null ? `  ·  ${Math.round(pace)}% of 30d pace` : "");
   for (const w of windows) row(w.label, w, w.n && w.n < w.d ? `  (${w.n}/${w.d} d)` : "");
   console.log("---");
 

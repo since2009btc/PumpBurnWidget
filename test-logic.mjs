@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 async function load(file, endMarker) {
   const src = readFileSync(file, 'utf8');
   const block = src.slice(src.indexOf('function fmt(n)'), src.indexOf(endMarker));
-  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps'];
+  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg'];
   return import('data:text/javascript,' + encodeURIComponent(`${block}\nexport { ${names.join(', ')} };`));
 }
 
@@ -23,7 +23,7 @@ for (const [label, file, end] of [
   ['iPhone', 'PumpBurnWidget.js', 'async function rpc('],
   ['Mac', 'mac/pumpburn.5m.js', 'const pad = '],
 ]) {
-  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps } = await load(file, end);
+  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg } = await load(file, end);
   console.log(`\n=== ${label} (${file}) ===`);
 
   console.log('--- formatting ---');
@@ -75,6 +75,11 @@ for (const [label, file, end] of [
   const h = lastHourFrom(snaps, now, 800, { pump: 0.01, sol: 100 });
   ok('uses the snapshot nearest to -60 min, per hour', Math.abs(h.pump - 100 * 60 / 58) < 1e-9, h && h.pump);
   ok('no snapshot in 40-80 min -> null', lastHourFrom([[now - 10 * 60e3, 1, 1]], now, 1, {}) === null);
+
+  console.log('--- today vs 30-day pace ---');
+  ok('at 06:00 UTC a quarter of the average is 100%', Math.round(paceVsAvg(50e6, 200e6, Date.UTC(2026, 9, 7, 6, 0))) === 100);
+  ok('at 18:00 UTC half the average is 67%', Math.round(paceVsAvg(100e6, 200e6, Date.UTC(2026, 9, 7, 18, 0))) === 67);
+  ok('first 30 minutes -> null', paceVsAvg(1e6, 200e6, Date.UTC(2026, 9, 7, 0, 20)) === null);
 
   console.log('--- hourly profile ---');
   // 3 past days + today until 10:30 UTC, a snapshot every 5 min, 1M PUMP burned per 5 min at $0.01

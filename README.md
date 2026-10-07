@@ -22,7 +22,7 @@ home screen widget. No API key, no server, no account.
 
 **iPhone (Scriptable, large widget)**
 
-- PUMP burned today, with USD, SOL and % of the 30-day daily average
+- PUMP burned today, with USD, SOL and the pace against the 30-day average (scaled to the time of day)
 - Yesterday, last 7 and last 30 days, in PUMP, USD and % of supply
 - Column chart of the last 30 days
 - Total burned, PUMP price and live burn rate
