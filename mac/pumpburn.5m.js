@@ -532,11 +532,11 @@ if (process.argv.includes("--backfill-hours")) {
   const F = "font=Menlo size=12";
 
   const solTxt = v => (v !== null && v !== undefined && isFinite(v)) ? `${Math.round(v).toLocaleString("en-US")} SOL` : null;
-  const row = (label, x, note = "") => {
-    if (!x || x.pump === null) return console.log(`${pad(label, 15)}— | ${F}`);
+  const row = (label, x, note = "", style = "") => {
+    if (!x || x.pump === null) return console.log(`${pad(label, 15)}— | ${F}${style}`);
     const bits = [pad(`${fmt(x.pump)} PUMP`, 13), pad(usd(x.usd), 8), solTxt(x.sol) ? pad(solTxt(x.sol), 13) : null,
       `${(x.pump / supply * 100).toFixed(3)}% supply`].filter(Boolean);
-    console.log(`${pad(label, 15)}${bits.join("  ·  ")}${note} | ${F}`);
+    console.log(`${pad(label, 15)}${bits.join("  ·  ")}${note} | ${F}${style}`);
   };
 
   // menu bar
@@ -567,7 +567,7 @@ if (process.argv.includes("--backfill-hours")) {
   row("Last hour", lastHour);
   const w30 = windows[1];
   const pace = today && w30.n ? paceVsAvg(today.pump, w30.pump / w30.n, now) : null;
-  row("Today (UTC)", today, pace !== null ? `  ·  ${Math.round(pace)}% of 30d pace` : "");
+  row("Today (UTC)", today, pace !== null ? `  ·  ${Math.round(pace)}% of 30d pace` : "", " color=#E3A857");
   for (const w of windows) row(w.label, w, w.n && w.n < w.d ? `  (${w.n}/${w.d} d)` : "");
   console.log("---");
 
