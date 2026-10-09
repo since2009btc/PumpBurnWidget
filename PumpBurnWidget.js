@@ -183,6 +183,22 @@ function paceVsAvg(todayPump, dailyAvg, now) {
   return todayPump / (dailyAvg * elapsed) * 100;
 }
 
+// Rebuild the readings missing while the Mac slept. The total burned across the gap is
+// exact (supply before minus supply after); it is spread over time in proportion to the
+// burner wallets' transactions, giving a synthetic reading every 5 minutes, flagged [t, s, p, 1].
+function fillGap(a, b, eventTimes, step = 5 * 60e3) {
+  const [t0, s0, p0] = a, [t1, s1, p1] = b;
+  const ev = eventTimes.filter(t => t > t0 && t <= t1).sort((x, y) => x - y);
+  const total = Math.max(0, s0 - s1), out = [];
+  let k = 0;
+  for (let t = t0 + step; t < t1 - step / 2; t += step) {
+    while (k < ev.length && ev[k] <= t) k++;
+    const share = ev.length ? k / ev.length : (t - t0) / (t1 - t0);
+    out.push([t, s0 - total * share, p0 + (p1 - p0) * (t - t0) / (t1 - t0), 1]);
+  }
+  return out;
+}
+
 async function rpc(method, params) {
   const r = new Request(RPC);
   r.method = "POST";

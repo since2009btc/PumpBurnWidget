@@ -121,9 +121,11 @@ get a free key at helius.dev:
   minutes). **PUMP/hr** is the supply drop between the last two refreshes on
   the Mac, and over the last two hours on the iPhone.
 - **The hourly chart is measured by the plugin itself** from the supply every
-  refresh, because no source publishes hourly figures. It only covers hours
-  when the Mac was awake (an hour needs 30+ minutes of data), and the 30-day
-  average fills up over the first month after install.
+  refresh, because no source publishes hourly figures. When the Mac was asleep,
+  the next refresh rebuilds the missing hours (up to 72 h back): the PUMP burned
+  across the gap is exact, and it is spread over the hours in proportion to the
+  burner wallets' transactions, so those hours are an estimate. The first refresh
+  after a long sleep takes up to about a minute.
 - **The charts need SwiftBar.** They are SVG images, which xbar may not render.
 - **Local state** (snapshots, the cached daily series and the chart setting)
   stays on the device:

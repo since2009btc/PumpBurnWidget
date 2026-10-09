@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 async function load(file, endMarker) {
   const src = readFileSync(file, 'utf8');
   const block = src.slice(src.indexOf('function fmt(n)'), src.indexOf(endMarker));
-  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg'];
+  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg', 'fillGap'];
   return import('data:text/javascript,' + encodeURIComponent(`${block}\nexport { ${names.join(', ')} };`));
 }
 
@@ -23,7 +23,7 @@ for (const [label, file, end] of [
   ['iPhone', 'PumpBurnWidget.js', 'async function rpc('],
   ['Mac', 'mac/pumpburn.5m.js', 'const pad = '],
 ]) {
-  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg } = await load(file, end);
+  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg, fillGap } = await load(file, end);
   console.log(`\n=== ${label} (${file}) ===`);
 
   console.log('--- formatting ---');
@@ -75,6 +75,19 @@ for (const [label, file, end] of [
   const h = lastHourFrom(snaps, now, 800, { pump: 0.01, sol: 100 });
   ok('uses the snapshot nearest to -60 min, per hour', Math.abs(h.pump - 100 * 60 / 58) < 1e-9, h && h.pump);
   ok('no snapshot in 40-80 min -> null', lastHourFrom([[now - 10 * 60e3, 1, 1]], now, 1, {}) === null);
+
+  console.log('--- sleep gap rebuilt ---');
+  const g0 = Date.UTC(2026, 9, 8, 0, 0), g1 = g0 + 4 * 3600e3;
+  // 4 h asleep, 1,000 PUMP gone; 3/4 of the burner tx in the first hour
+  const ev = [...Array(30).keys()].map(i => g0 + 60e3 + i * 1e5).concat([...Array(10).keys()].map(i => g0 + 3600e3 + 1 + i * 1e6));
+  const fill = fillGap([g0, 5000, 1], [g1, 4000, 2], ev);
+  ok('a reading every 5 min, flagged synthetic', fill.length === 47 && fill.every(x => x[3] === 1), fill.length);
+  ok('total burned across the gap is kept', Math.abs(fill.at(-1)[1] - 4000) < 1e3 / 40 + 1e-9);
+  ok('spread follows the burner tx', Math.abs(fill.find(x => x[0] === g0 + 3600e3)[1] - (5000 - 750)) < 1e-9);
+  ok('price interpolated', Math.abs(fill[23][2] - (1 + (fill[23][0] - g0) / (g1 - g0))) < 1e-12);
+  ok('no tx found -> linear', Math.abs(fillGap([g0, 5000, 1], [g1, 4000, 1], [])[23][1] - (5000 - 1000 * (fill[23][0] - g0) / (g1 - g0))) < 1e-9);
+  const hp2 = hourlyFromSnaps([[g0, 5000, 1], ...fill, [g1, 4000, 2]], g1 + 3600e3);
+  ok('hourly profile sees the rebuilt hours', hp2.today[0] && Math.round(hp2.today[0].pump) === 750, hp2.today[0] && hp2.today[0].pump);
 
   console.log('--- today vs 30-day pace ---');
   ok('at 06:00 UTC a quarter of the average is 100%', Math.round(paceVsAvg(50e6, 200e6, Date.UTC(2026, 9, 7, 6, 0))) === 100);

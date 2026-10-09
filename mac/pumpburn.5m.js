@@ -20,6 +20,8 @@ const RPC      = process.env.PUMP_RPC || "https://api.mainnet-beta.solana.com";
 const MINT     = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const BURNER   = "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c";
+const BURNERS  = [BURNER, "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM"];
+const BACKFILL_HOURS = 72;      // rebuild sleep gaps up to this far back (about 1 RPC call per 1,000 burner tx)
 const TOTAL    = 1e12;
 const KEEP_DAYS = 31;           // local snapshots: last hour, live rate, hourly profile
 const PAGE = "https://pump.fun/pump-token";
@@ -191,6 +193,22 @@ function paceVsAvg(todayPump, dailyAvg, now) {
   return todayPump / (dailyAvg * elapsed) * 100;
 }
 
+// Rebuild the readings missing while the Mac slept. The total burned across the gap is
+// exact (supply before minus supply after); it is spread over time in proportion to the
+// burner wallets' transactions, giving a synthetic reading every 5 minutes, flagged [t, s, p, 1].
+function fillGap(a, b, eventTimes, step = 5 * 60e3) {
+  const [t0, s0, p0] = a, [t1, s1, p1] = b;
+  const ev = eventTimes.filter(t => t > t0 && t <= t1).sort((x, y) => x - y);
+  const total = Math.max(0, s0 - s1), out = [];
+  let k = 0;
+  for (let t = t0 + step; t < t1 - step / 2; t += step) {
+    while (k < ev.length && ev[k] <= t) k++;
+    const share = ev.length ? k / ev.length : (t - t0) / (t1 - t0);
+    out.push([t, s0 - total * share, p0 + (p1 - p0) * (t - t0) / (t1 - t0), 1]);
+  }
+  return out;
+}
+
 const pad = (s, n) => String(s).padEnd(n);
 
 async function rpc(method, params) {
@@ -250,6 +268,52 @@ async function getBurnRate() {
   } catch { return null; }
 }
 
+// Timestamps (ms) of every burner transaction since `fromMs`, newest first through the
+// public RPC (1,000 per call). null if it would take more than `maxCalls` or the RPC fails.
+async function burnerTimes(fromMs, maxCalls = 150) {
+  const out = [];
+  let calls = 0;
+  for (const w of BURNERS) {
+    let before;
+    for (;;) {
+      if (++calls > maxCalls) return null;
+      let page;
+      for (let a = 0; ; a++) {
+        try { page = await rpc("getSignaturesForAddress", [w, { limit: 1000, ...(before && { before }) }]); break; }
+        catch { if (a >= 3) return null; await new Promise(r => setTimeout(r, 2000 * (a + 1))); }
+      }
+      if (!page.length) break;
+      for (const s of page) if (s.blockTime && !s.err) out.push(s.blockTime * 1000);
+      before = page[page.length - 1].signature;
+      if ((page[page.length - 1].blockTime || 0) * 1000 < fromMs) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+  return out;
+}
+
+// Find sleep gaps in the readings and fill them (see fillGap). Gaps already filled, or
+// older than BACKFILL_HOURS, are left alone; a failed attempt is retried after 30 minutes.
+async function backfillGaps(state, now) {
+  const real = state.snaps.filter(x => !x[3]);
+  state.filledGaps = state.filledGaps || {};
+  const gaps = [];
+  for (let i = 1; i < real.length; i++) {
+    const [a, b] = [real[i - 1], real[i]];
+    if (b[0] - a[0] > 15 * 60e3 && a[0] > now - BACKFILL_HOURS * 3600e3 && !state.filledGaps[a[0]]) gaps.push([a, b]);
+  }
+  if (!gaps.length || now - (state.lastBackfillTry || 0) < 30 * 60e3) return;
+  state.lastBackfillTry = now;
+  const times = await burnerTimes(gaps[0][0][0]);
+  if (!times) return;
+  for (const [a, b] of gaps) {
+    state.snaps.push(...fillGap(a, b, times));
+    state.filledGaps[a[0]] = b[0];
+  }
+  state.snaps.sort((x, y) => x[0] - y[0]);
+  for (const k of Object.keys(state.filledGaps)) if (now - k > KEEP_DAYS * 864e5) delete state.filledGaps[k];
+}
+
 (async () => {
   let supply, prices, cyclesHr;
   try {
@@ -270,6 +334,7 @@ async function getBurnRate() {
   const state = loadState();
   state.snaps.push([now, supply, prices.pump ?? 0]);
   state.snaps.sort((a, b) => a[0] - b[0]);
+  await backfillGaps(state, now);
 
   const todayKey = dayKey(now);
 
