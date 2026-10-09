@@ -578,6 +578,7 @@ if (process.argv.includes("--backfill-hours")) {
 
   head(`Average${since ? ` (since ${since})` : ""}`);
   const scaled = k => avg ? { pump: avg.pump * k, usd: avg.usd * k, sol: avg.sol * k } : null;
+  row("Hourly", scaled(1 / 24));
   row("Daily", scaled(1));
   row("Weekly", scaled(7));
   row("Monthly", scaled(30));

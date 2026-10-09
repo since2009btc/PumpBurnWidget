@@ -14,7 +14,7 @@ home screen widget. No API key, no server, no account.
 - PUMP and SOL price, with 1-day / 1-week / 1-month change, and the live burn rate
 - PUMP burned in the last hour, today, yesterday, last 7 / 30 days, last 3 / 6 months,
   each in PUMP, USD, SOL and % of supply
-- Average burn per day, week, month, 3 months, 6 months and year
+- Average burn per hour, day, week, month, 3 months, 6 months and year
 - Total burned, in PUMP, USD, SOL and % of the 1T supply
 - Column chart of the last 30 days, in USD or PUMP: hold ⌥ to peek at the other
   unit, or click "Show chart in …" to switch
