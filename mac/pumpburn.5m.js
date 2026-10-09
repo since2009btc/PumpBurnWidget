@@ -568,6 +568,11 @@ if (process.argv.includes("--backfill-hours")) {
   const w30 = windows[1];
   const pace = today && w30.n ? paceVsAvg(today.pump, w30.pump / w30.n, now) : null;
   row("Today (UTC)", today, pace !== null ? `  ·  ${Math.round(pace)}% of 30d pace` : "", " color=#E3A857");
+  // yesterday: a closed day, compared with the full-day average of the 30 days before it
+  const yKey = shiftKey(todayKey, -1), yDay = dayFor(yKey);
+  const prev30 = sumOf(lastN(31).slice(0, 30));
+  row("Yesterday", yDay.pump === null ? null : yDay,
+    yDay.pump !== null && prev30.n ? `  ·  ${Math.round(yDay.pump / (prev30.pump / prev30.n) * 100)}% of 30d avg` : "");
   for (const w of windows) row(w.label, w, w.n && w.n < w.d ? `  (${w.n}/${w.d} d)` : "");
   console.log("---");
 
