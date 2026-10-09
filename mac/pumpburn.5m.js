@@ -21,7 +21,8 @@ const MINT     = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const BURNER   = "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c";
 const BURNERS  = [BURNER, "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM"];
-const BACKFILL_HOURS = 72;      // rebuild sleep gaps up to this far back (about 1 RPC call per 1,000 burner tx)
+const BACKFILL_HOURS = 72;
+const HOURLY_DAYS = 60;         // hourly profile: pump.fun daily totals spread by on-chain burner tx timing      // rebuild sleep gaps up to this far back (about 1 RPC call per 1,000 burner tx)
 const TOTAL    = 1e12;
 const KEEP_DAYS = 31;           // local snapshots: last hour, live rate, hourly profile
 const PAGE = "https://pump.fun/pump-token";
@@ -209,6 +210,24 @@ function fillGap(a, b, eventTimes, step = 5 * 60e3) {
   return out;
 }
 
+// Hourly profile from on-chain timing: for each past UTC day fully covered by the burner
+// transaction counts, pump.fun's daily total (PUMP and USD) is spread over the 24 hours in
+// proportion to that hour's burner transactions. counts: { "YYYY-MM-DDTHH": n }.
+// Returns { avg: [24 × {pump, usd} | null], n: [24 × days used] } over the last `nDays` days.
+function hourlyFromCounts(days, counts, covered, now, nDays) {
+  const todayStart = Date.parse(dayKey(now) + "T00:00:00Z");
+  const sum = Array.from({ length: 24 }, () => ({ pump: 0, usd: 0, n: 0 }));
+  for (let i = 1; i <= nDays; i++) {
+    const start = todayStart - i * 864e5, k = dayKey(start);
+    if (!days[k] || !covered || covered.from > start || covered.to < start + 864e5) continue;
+    const c = Array.from({ length: 24 }, (_, h) => counts[`${k}T${String(h).padStart(2, "0")}`] || 0);
+    const tot = c.reduce((a, x) => a + x, 0);
+    if (!tot) continue;
+    c.forEach((x, h) => { sum[h].pump += days[k].pump * x / tot; sum[h].usd += days[k].usd * x / tot; sum[h].n++; });
+  }
+  return { avg: sum.map(x => x.n ? { pump: x.pump / x.n, usd: x.usd / x.n } : null), n: sum.map(x => x.n) };
+}
+
 const pad = (s, n) => String(s).padEnd(n);
 
 async function rpc(method, params) {
@@ -230,6 +249,8 @@ function loadState() {
 function saveState(s) {
   const cutoff = Date.now() - KEEP_DAYS * 864e5;
   s.snaps = s.snaps.filter(x => x[0] >= cutoff);
+  const hourCut = new Date(Date.now() - (HOURLY_DAYS + 2) * 864e5).toISOString().slice(0, 13);
+  for (const k of Object.keys(s.hourCounts || {})) if (k < hourCut) delete s.hourCounts[k];
   try {
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(STATE, JSON.stringify(s));
@@ -267,6 +288,38 @@ async function getBurnRate() {
     return hours > 0 ? ts.length / hours / 2 : null;
   } catch { return null; }
 }
+
+// Burner transactions per UTC hour in [fromMs, toMs), newest first through the public RPC.
+// { counts: {"YYYY-MM-DDTHH": n}, done } — done=false if it stopped at maxCalls.
+async function countBurnerTx(fromMs, toMs, maxCalls, onProgress) {
+  const counts = {};
+  let calls = 0;
+  for (const w of BURNERS) {
+    let before;
+    for (;;) {
+      if (++calls > maxCalls) return { counts, done: false };
+      let page;
+      for (let a = 0; ; a++) {
+        try { page = await rpc("getSignaturesForAddress", [w, { limit: 1000, ...(before && { before }) }]); break; }
+        catch { if (a >= 5) return { counts, done: false }; await new Promise(r => setTimeout(r, 3000 * (a + 1))); }
+      }
+      if (!page.length) break;
+      for (const s of page) {
+        const t = (s.blockTime || 0) * 1000;
+        if (!t || s.err || t < fromMs || t >= toMs) continue;
+        const k = new Date(t).toISOString().slice(0, 13);
+        counts[k] = (counts[k] || 0) + 1;
+      }
+      before = page[page.length - 1].signature;
+      const oldest = (page[page.length - 1].blockTime || 0) * 1000;
+      if (onProgress) onProgress(w, oldest, calls);
+      if (oldest < fromMs) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+  return { counts, done: true };
+}
+const addCounts = (into, add) => { for (const [k, v] of Object.entries(add)) into[k] = (into[k] || 0) + v; };
 
 // Timestamps (ms) of every burner transaction since `fromMs`, newest first through the
 // public RPC (1,000 per call). null if it would take more than `maxCalls` or the RPC fails.
@@ -314,6 +367,31 @@ async function backfillGaps(state, now) {
   for (const k of Object.keys(state.filledGaps)) if (now - k > KEEP_DAYS * 864e5) delete state.filledGaps[k];
 }
 
+// One-off: node pumpburn.5m.js --backfill-hours [days]  — count burner tx per hour going back
+// `days` (default HOURLY_DAYS), for the hourly profile. Safe to run while SwiftBar refreshes.
+if (process.argv.includes("--backfill-hours")) {
+  (async () => {
+    const i = process.argv.indexOf("--backfill-hours");
+    const nDays = Number(process.argv[i + 1]) || HOURLY_DAYS;
+    const end = Date.now(), target = end - nDays * 864e5;
+    const st0 = loadState();
+    const to = st0.counted ? st0.counted.from : end;          // only the part not counted yet
+    if (to <= target) { console.log("already covered"); return; }
+    console.log(`counting burner tx from ${new Date(target).toISOString()} to ${new Date(to).toISOString()}`);
+    const { counts, done } = await countBurnerTx(target, to, 5000, (w, oldest, calls) => {
+      if (calls % 25 === 0) console.log(`  ${w.slice(0, 6)}… back to ${new Date(oldest).toISOString().slice(0, 16)} (${calls} calls)`);
+    });
+    if (!done) { console.log("stopped early (RPC errors or call limit); nothing saved, run again"); process.exit(1); }
+    const st = loadState();                                    // reload: SwiftBar may have written meanwhile
+    st.hourCounts = st.hourCounts || {};
+    addCounts(st.hourCounts, counts);
+    st.counted = { from: target, to: st.counted ? st.counted.to : end };
+    saveState(st);
+    console.log(`saved ${Object.keys(counts).length} hours`);
+  })();
+  return;
+}
+
 (async () => {
   let supply, prices, cyclesHr;
   try {
@@ -335,6 +413,11 @@ async function backfillGaps(state, now) {
   state.snaps.push([now, supply, prices.pump ?? 0]);
   state.snaps.sort((a, b) => a[0] - b[0]);
   await backfillGaps(state, now);
+  // keep the per-hour burner tx counts current once --backfill-hours has run
+  if (state.counted && now - state.counted.to > 60e3) {
+    const { counts, done } = await countBurnerTx(state.counted.to, now, 120);
+    if (done) { addCounts(state.hourCounts, counts); state.counted.to = now; }
+  }
 
   const todayKey = dayKey(now);
 
@@ -373,6 +456,12 @@ async function backfillGaps(state, now) {
   const today = liveToday(off, todayKey, supply, prices);
   const lastHour = lastHourFrom(state.snaps, now, supply, prices);
   const hourly = hourlyFromSnaps(state.snaps, now);
+  // past days: pump.fun daily totals spread by on-chain timing (exact totals, no Mac uptime needed);
+  // today stays on the Mac's own readings
+  if (state.hourCounts) {
+    const hc = hourlyFromCounts(offDays, state.hourCounts, state.counted, now, HOURLY_DAYS);
+    if (Math.max(...hc.n) > 0) { hourly.avg = hc.avg; hourly.n = hc.n; }
+  }
 
   let pumpHr = null;
   const n = state.snaps.length;

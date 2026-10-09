@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 async function load(file, endMarker) {
   const src = readFileSync(file, 'utf8');
   const block = src.slice(src.indexOf('function fmt(n)'), src.indexOf(endMarker));
-  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg', 'fillGap'];
+  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg', 'fillGap', 'hourlyFromCounts'];
   return import('data:text/javascript,' + encodeURIComponent(`${block}\nexport { ${names.join(', ')} };`));
 }
 
@@ -23,7 +23,7 @@ for (const [label, file, end] of [
   ['iPhone', 'PumpBurnWidget.js', 'async function rpc('],
   ['Mac', 'mac/pumpburn.5m.js', 'const pad = '],
 ]) {
-  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg, fillGap } = await load(file, end);
+  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg, fillGap, hourlyFromCounts } = await load(file, end);
   console.log(`\n=== ${label} (${file}) ===`);
 
   console.log('--- formatting ---');
@@ -88,6 +88,20 @@ for (const [label, file, end] of [
   ok('no tx found -> linear', Math.abs(fillGap([g0, 5000, 1], [g1, 4000, 1], [])[23][1] - (5000 - 1000 * (fill[23][0] - g0) / (g1 - g0))) < 1e-9);
   const hp2 = hourlyFromSnaps([[g0, 5000, 1], ...fill, [g1, 4000, 2]], g1 + 3600e3);
   ok('hourly profile sees the rebuilt hours', hp2.today[0] && Math.round(hp2.today[0].pump) === 750, hp2.today[0] && hp2.today[0].pump);
+
+  console.log('--- hourly profile from on-chain timing ---');
+  const nowH = Date.UTC(2026, 9, 9, 12, 0);
+  const offD = { '2026-10-07': { pump: 240e6, usd: 1.2e6 }, '2026-10-08': { pump: 120e6, usd: 0.6e6 } };
+  const cnt = {};
+  for (const k of ['2026-10-07', '2026-10-08']) for (let h = 0; h < 24; h++) cnt[`${k}T${String(h).padStart(2, '0')}`] = h < 12 ? 1 : 3;
+  const cov = { from: Date.UTC(2026, 9, 7), to: nowH };
+  const hc = hourlyFromCounts(offD, cnt, cov, nowH, 60);
+  // day 1: 240M over 48 units -> 5M/unit; day 2: 120M -> 2.5M/unit; hour 0 = 1 unit, hour 12 = 3 units
+  ok('daily total spread by tx share', Math.abs(hc.avg[0].pump - (5e6 + 2.5e6) / 2) < 1 && Math.abs(hc.avg[12].pump - (15e6 + 7.5e6) / 2) < 1, hc.avg[0] && hc.avg[0].pump);
+  ok('usd spread too', Math.abs(hc.avg[12].usd - (1.2e6 * 3 / 48 + 0.6e6 * 3 / 48) / 2) < 1e-6);
+  ok('days counted', hc.n[0] === 2);
+  ok('uncovered day skipped', hourlyFromCounts(offD, cnt, { from: Date.UTC(2026, 9, 8), to: nowH }, nowH, 60).n[0] === 1);
+  ok('today never in the average', hourlyFromCounts({ ...offD, '2026-10-09': { pump: 1e12, usd: 1 } }, cnt, cov, nowH, 60).avg[0].pump < 1e7);
 
   console.log('--- today vs 30-day pace ---');
   ok('at 06:00 UTC a quarter of the average is 100%', Math.round(paceVsAvg(50e6, 200e6, Date.UTC(2026, 9, 7, 6, 0))) === 100);

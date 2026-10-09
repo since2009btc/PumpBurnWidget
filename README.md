@@ -18,7 +18,7 @@ home screen widget. No API key, no server, no account.
 - Total burned, in PUMP, USD, SOL and % of the 1T supply
 - Column chart of the last 30 days, in USD or PUMP: hold ⌥ to peek at the other
   unit, or click "Show chart in …" to switch
-- Hourly burn by UTC hour: the average of the last 30 days, with today on top
+- Hourly burn by UTC hour: the average of the last 60 days, with today on top
 
 **iPhone (Scriptable, large widget)**
 
@@ -120,12 +120,15 @@ get a free key at helius.dev:
 - **Burns/hr** is measured over the burner's last 300 transactions (about 15–20
   minutes). **PUMP/hr** is the supply drop between the last two refreshes on
   the Mac, and over the last two hours on the iPhone.
-- **The hourly chart is measured by the plugin itself** from the supply every
-  refresh, because no source publishes hourly figures. When the Mac was asleep,
-  the next refresh rebuilds the missing hours (up to 72 h back): the PUMP burned
-  across the gap is exact, and it is spread over the hours in proportion to the
-  burner wallets' transactions, so those hours are an estimate. The first refresh
-  after a long sleep takes up to about a minute.
+- **Hourly chart.** No source publishes hourly figures, so the average is built
+  from on-chain timing: each past day's pump.fun total is spread over the 24 hours
+  in proportion to the burner wallets' transactions in each hour (daily totals
+  exact, hourly split estimated). Fill the history once with
+  `node pumpburn.5m.js --backfill-hours 60` (about 1,900 public RPC calls, ~15 min);
+  afterwards each refresh adds the new hours. Without it the plugin falls back to
+  its own supply readings. Today's bars always come from the plugin's readings;
+  hours missed while the Mac slept (up to 72 h) are rebuilt the same way on the
+  next refresh, which can then take up to a minute.
 - **The charts need SwiftBar.** They are SVG images, which xbar may not render.
 - **Local state** (snapshots, the cached daily series and the chart setting)
   stays on the device:

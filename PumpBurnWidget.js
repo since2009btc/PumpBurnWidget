@@ -199,6 +199,24 @@ function fillGap(a, b, eventTimes, step = 5 * 60e3) {
   return out;
 }
 
+// Hourly profile from on-chain timing: for each past UTC day fully covered by the burner
+// transaction counts, pump.fun's daily total (PUMP and USD) is spread over the 24 hours in
+// proportion to that hour's burner transactions. counts: { "YYYY-MM-DDTHH": n }.
+// Returns { avg: [24 × {pump, usd} | null], n: [24 × days used] } over the last `nDays` days.
+function hourlyFromCounts(days, counts, covered, now, nDays) {
+  const todayStart = Date.parse(dayKey(now) + "T00:00:00Z");
+  const sum = Array.from({ length: 24 }, () => ({ pump: 0, usd: 0, n: 0 }));
+  for (let i = 1; i <= nDays; i++) {
+    const start = todayStart - i * 864e5, k = dayKey(start);
+    if (!days[k] || !covered || covered.from > start || covered.to < start + 864e5) continue;
+    const c = Array.from({ length: 24 }, (_, h) => counts[`${k}T${String(h).padStart(2, "0")}`] || 0);
+    const tot = c.reduce((a, x) => a + x, 0);
+    if (!tot) continue;
+    c.forEach((x, h) => { sum[h].pump += days[k].pump * x / tot; sum[h].usd += days[k].usd * x / tot; sum[h].n++; });
+  }
+  return { avg: sum.map(x => x.n ? { pump: x.pump / x.n, usd: x.usd / x.n } : null), n: sum.map(x => x.n) };
+}
+
 async function rpc(method, params) {
   const r = new Request(RPC);
   r.method = "POST";
