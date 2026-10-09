@@ -22,7 +22,8 @@ const SOL_MINT = "So11111111111111111111111111111111111111112";
 const BURNER   = "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c";
 const BURNERS  = [BURNER, "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM"];
 const BACKFILL_HOURS = 72;
-const HOURLY_DAYS = 60;         // hourly profile: pump.fun daily totals spread by on-chain burner tx timing      // rebuild sleep gaps up to this far back (about 1 RPC call per 1,000 burner tx)
+const HOURLY_DAYS = 400;        // burner tx counts per hour kept this long (the whole history)
+const HOURLY_AVG_DAYS = 30;     // the hourly chart averages the last 30 days      // rebuild sleep gaps up to this far back (about 1 RPC call per 1,000 burner tx)
 const TOTAL    = 1e12;
 const KEEP_DAYS = 31;           // local snapshots: last hour, live rate, hourly profile
 const PAGE = "https://pump.fun/pump-token";
@@ -367,6 +368,61 @@ async function backfillGaps(state, now) {
   for (const k of Object.keys(state.filledGaps)) if (now - k > KEEP_DAYS * 864e5) delete state.filledGaps[k];
 }
 
+// One-off: node pumpburn.5m.js --backfill-all — walk the burner wallets' history back one month
+// at a time from the oldest hour already counted, saving after each month, until the wallets have
+// no older transactions or the public RPC gives up. Resumable: the paging cursor is saved.
+if (process.argv.includes("--backfill-all")) {
+  (async () => {
+    const st0 = loadState();
+    if (!st0.counted) { console.log("run --backfill-hours first"); process.exit(1); }
+    let cursor = st0.countCursor || {};                     // per wallet: signature to page back from
+    let from = st0.counted.from, finished = st0.countFinished || {};
+    for (;;) {
+      const target = from - 30 * 864e5;
+      const counts = {};
+      for (const w of BURNERS) {
+        if (finished[w]) continue;
+        let before = cursor[w], calls = 0;
+        for (;;) {
+          let page;
+          for (let a = 0; ; a++) {
+            try { page = await rpc("getSignaturesForAddress", [w, { limit: 1000, ...(before && { before }) }]); break; }
+            catch (e) {
+              if (a >= 6) { console.log(`RPC gave up on ${w.slice(0, 6)}… (${e.message}); stopping, progress saved`); return; }
+              await new Promise(r => setTimeout(r, 5000 * (a + 1)));
+            }
+          }
+          calls++;
+          if (!page.length) { finished[w] = true; console.log(`  ${w.slice(0, 6)}… reached its first transaction`); break; }
+          for (const s of page) {
+            const t = (s.blockTime || 0) * 1000;
+            if (!t || s.err || t >= from || t < target) continue;
+            const k = new Date(t).toISOString().slice(0, 13);
+            counts[k] = (counts[k] || 0) + 1;
+          }
+          const oldest = (page[page.length - 1].blockTime || 0) * 1000;
+          if (oldest < target) break;                        // keep `before` here: the rest belongs to the next month
+          before = page[page.length - 1].signature;
+          if (calls % 25 === 0) console.log(`  ${w.slice(0, 6)}… back to ${new Date(oldest).toISOString().slice(0, 16)}`);
+          await new Promise(r => setTimeout(r, 150));
+        }
+        cursor[w] = before;
+      }
+      const st = loadState();                                 // reload: SwiftBar may have written meanwhile
+      st.hourCounts = st.hourCounts || {};
+      addCounts(st.hourCounts, counts);
+      st.counted = { ...st.counted, from: target };
+      st.countCursor = cursor; st.countFinished = finished;
+      saveState(st);
+      const n = Object.values(counts).reduce((a, x) => a + x, 0);
+      console.log(`saved month ${new Date(target).toISOString().slice(0, 10)} → ${new Date(from).toISOString().slice(0, 10)}: ${n.toLocaleString("en-US")} tx`);
+      from = target;
+      if (BURNERS.every(w => finished[w])) { console.log("all burner history counted"); return; }
+    }
+  })();
+  return;
+}
+
 // One-off: node pumpburn.5m.js --backfill-hours [days]  — count burner tx per hour going back
 // `days` (default HOURLY_DAYS), for the hourly profile. Safe to run while SwiftBar refreshes.
 if (process.argv.includes("--backfill-hours")) {
@@ -459,7 +515,7 @@ if (process.argv.includes("--backfill-hours")) {
   // past days: pump.fun daily totals spread by on-chain timing (exact totals, no Mac uptime needed);
   // today stays on the Mac's own readings
   if (state.hourCounts) {
-    const hc = hourlyFromCounts(offDays, state.hourCounts, state.counted, now, HOURLY_DAYS);
+    const hc = hourlyFromCounts(offDays, state.hourCounts, state.counted, now, HOURLY_AVG_DAYS);
     if (Math.max(...hc.n) > 0) { hourly.avg = hc.avg; hourly.n = hc.n; }
   }
 

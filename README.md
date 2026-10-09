@@ -18,7 +18,7 @@ home screen widget. No API key, no server, no account.
 - Total burned, in PUMP, USD, SOL and % of the 1T supply
 - Column chart of the last 30 days, in USD or PUMP: hold ⌥ to peek at the other
   unit, or click "Show chart in …" to switch
-- Hourly burn by UTC hour: the average of the last 60 days, with today on top
+- Hourly burn by UTC hour: the average of the last 30 days, with today on top
 
 **iPhone (Scriptable, large widget)**
 
