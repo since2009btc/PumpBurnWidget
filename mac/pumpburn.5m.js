@@ -348,15 +348,19 @@ async function burnerTimes(fromMs, maxCalls = 150) {
 
 // Find sleep gaps in the readings and fill them (see fillGap). Gaps already filled, or
 // older than BACKFILL_HOURS, are left alone; a failed attempt is retried after 30 minutes.
-async function backfillGaps(state, now) {
+function gapsToFill(state, now) {
   const real = state.snaps.filter(x => !x[3]);
-  state.filledGaps = state.filledGaps || {};
-  const gaps = [];
+  const filled = state.filledGaps || {}, gaps = [];
   for (let i = 1; i < real.length; i++) {
     const [a, b] = [real[i - 1], real[i]];
-    if (b[0] - a[0] > 15 * 60e3 && a[0] > now - BACKFILL_HOURS * 3600e3 && !state.filledGaps[a[0]]) gaps.push([a, b]);
+    if (b[0] - a[0] > 15 * 60e3 && a[0] > now - BACKFILL_HOURS * 3600e3 && !filled[a[0]]) gaps.push([a, b]);
   }
-  if (!gaps.length || now - (state.lastBackfillTry || 0) < 30 * 60e3) return;
+  return gaps.length && now - (state.lastBackfillTry || 0) >= 30 * 60e3 ? gaps : [];
+}
+async function backfillGaps(state, now) {
+  state.filledGaps = state.filledGaps || {};
+  const gaps = gapsToFill(state, now);
+  if (!gaps.length) return;
   state.lastBackfillTry = now;
   const times = await burnerTimes(gaps[0][0][0]);
   if (!times) return;
@@ -366,6 +370,46 @@ async function backfillGaps(state, now) {
   }
   state.snaps.sort((x, y) => x[0] - y[0]);
   for (const k of Object.keys(state.filledGaps)) if (now - k > KEEP_DAYS * 864e5) delete state.filledGaps[k];
+}
+
+// Catching up after the Mac slept (gap readings, per-hour burner tx counts) can take minutes on
+// the public RPC, and SwiftBar shows "..." until the plugin exits. So the menu run hands it to a
+// detached `--catchup` child, which merges its results into state.json and refreshes the menu.
+const LOCK = path.join(DIR, "catchup.lock");
+const catchupRunning = () => { try { return Date.now() - fs.statSync(LOCK).mtimeMs < 10 * 60e3; } catch { return false; } };
+
+// Copy what a catch-up produced (synthetic readings, filled gaps, newer tx counts) from `from` into `into`.
+function mergeCatchup(into, from) {
+  const seen = new Set(into.snaps.map(x => x[0]));
+  into.snaps.push(...from.snaps.filter(x => x[3] && !seen.has(x[0])));
+  into.snaps.sort((a, b) => a[0] - b[0]);
+  into.filledGaps = { ...from.filledGaps, ...into.filledGaps };
+  into.lastBackfillTry = Math.max(into.lastBackfillTry || 0, from.lastBackfillTry || 0);
+  if (from.counted && (!into.counted || from.counted.to > into.counted.to)) {
+    into.counted = from.counted; into.hourCounts = from.hourCounts;
+  }
+  return into;
+}
+
+if (process.argv.includes("--catchup")) {
+  (async () => {
+    if (catchupRunning()) return;
+    try { fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(LOCK, String(process.pid)); } catch { /* non-fatal */ }
+    try {
+      const now = Date.now(), work = loadState();
+      await backfillGaps(work, now);
+      if (work.counted && now - work.counted.to > 60e3) {
+        const { counts, done } = await countBurnerTx(work.counted.to, now, 120);
+        if (done) { work.hourCounts = work.hourCounts || {}; addCounts(work.hourCounts, counts); work.counted = { ...work.counted, to: now }; }
+      }
+      saveState(mergeCatchup(loadState(), work));            // reload: the menu may have written meanwhile
+    } finally {
+      try { fs.unlinkSync(LOCK); } catch { /* already gone */ }
+    }
+    if (process.platform === "darwin")
+      require("child_process").execFile("open", ["-g", "swiftbar://refreshplugin?name=pumpburn"], () => {});
+  })();
+  return;
 }
 
 // One-off: node pumpburn.5m.js --backfill-all — walk the burner wallets' history back one month
@@ -468,11 +512,17 @@ if (process.argv.includes("--backfill-hours")) {
   const state = loadState();
   state.snaps.push([now, supply, prices.pump ?? 0]);
   state.snaps.sort((a, b) => a[0] - b[0]);
-  await backfillGaps(state, now);
-  // keep the per-hour burner tx counts current once --backfill-hours has run
-  if (state.counted && now - state.counted.to > 60e3) {
-    const { counts, done } = await countBurnerTx(state.counted.to, now, 120);
-    if (done) { addCounts(state.hourCounts, counts); state.counted.to = now; }
+  // keep the per-hour burner tx counts current once --backfill-hours has run: a few minutes behind
+  // is one quick RPC call, done here; gaps and long catch-ups go to the background child
+  const behind = state.counted ? now - state.counted.to : 0;
+  if (!catchupRunning()) {
+    if (gapsToFill(state, now).length || behind > 15 * 60e3) {
+      require("child_process").spawn(process.execPath, [process.argv[1], "--catchup"],
+        { detached: true, stdio: "ignore" }).unref();
+    } else if (behind > 60e3) {
+      const { counts, done } = await countBurnerTx(state.counted.to, now, 5);
+      if (done) { addCounts(state.hourCounts, counts); state.counted.to = now; }
+    }
   }
 
   const todayKey = dayKey(now);
@@ -525,7 +575,7 @@ if (process.argv.includes("--backfill-hours")) {
     const dt = (now - state.snaps[n - 2][0]) / 3600e3;
     if (dt > 0.01 && dt < 6) pumpHr = Math.max(0, (state.snaps[n - 2][1] - supply) / dt);
   }
-  saveState(state);
+  saveState(mergeCatchup(state, loadState()));           // keep what a background catch-up saved meanwhile
 
   const burned = TOTAL - supply;
   const pctTotal = (burned / TOTAL) * 100;
