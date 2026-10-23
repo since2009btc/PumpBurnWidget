@@ -41,7 +41,9 @@ a server of ours.
 pump.fun has no public API for its daily table, but the page carries the whole
 series in its HTML. The widget reads it from there, keeps the last good copy,
 and falls back to a copy embedded in the script if the page can't be read. If
-pump.fun changes the page, the history simply stops updating. Supply, prices and
+pump.fun changes the page, the history simply stops updating. If the page blocks automated reads (it has done so behind a Cloudflare
+challenge), the recent days come from the chain (supply drop between UTC midnights)
+and DefiLlama (USD spent, revenue) until it answers again. Supply, prices and
 today's live total keep working.
 
 **Today** is pump.fun's figure at the last page fetch, plus the drop in PUMP

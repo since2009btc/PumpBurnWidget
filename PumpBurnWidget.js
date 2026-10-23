@@ -217,6 +217,13 @@ function hourlyFromCounts(days, counts, covered, now, nDays) {
   return { avg: sum.map(x => x.n ? { pump: x.pump / x.n, usd: x.usd / x.n } : null), n: sum.map(x => x.n) };
 }
 
+// Supply reading nearest to `ts` (real or rebuilt), within `tol` ms; null if none.
+function supplyAt(snaps, ts, tol = 30 * 60e3) {
+  let best = null;
+  for (const x of snaps) if (Math.abs(x[0] - ts) <= tol && (!best || Math.abs(x[0] - ts) < Math.abs(best[0] - ts))) best = x;
+  return best ? best[1] : null;
+}
+
 async function rpc(method, params) {
   const r = new Request(RPC);
   r.method = "POST";

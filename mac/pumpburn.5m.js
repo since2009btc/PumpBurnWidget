@@ -229,6 +229,13 @@ function hourlyFromCounts(days, counts, covered, now, nDays) {
   return { avg: sum.map(x => x.n ? { pump: x.pump / x.n, usd: x.usd / x.n } : null), n: sum.map(x => x.n) };
 }
 
+// Supply reading nearest to `ts` (real or rebuilt), within `tol` ms; null if none.
+function supplyAt(snaps, ts, tol = 30 * 60e3) {
+  let best = null;
+  for (const x of snaps) if (Math.abs(x[0] - ts) <= tol && (!best || Math.abs(x[0] - ts) < Math.abs(best[0] - ts))) best = x;
+  return best ? best[1] : null;
+}
+
 const pad = (s, n) => String(s).padEnd(n);
 
 async function rpc(method, params) {
@@ -268,6 +275,27 @@ async function getOfficial() {
     const days = parseOfficial(await r.text());
     return Object.keys(days).length > 30 ? days : null;
   } catch { return null; }
+}
+
+// DefiLlama daily series (buyback USD and revenue), cached in state and refreshed hourly.
+// Used when pump.fun's page blocks automated reads.
+async function llamaDaily(state, now) {
+  const c = state.llama;
+  if (c && now - c.fetchedAt < 3600e3) return c;
+  const series = async (slug, type) => {
+    const r = await fetch(`https://api.llama.fi/summary/fees/${slug}?dataType=${type}`, { signal: AbortSignal.timeout(20000) });
+    const j = await r.json();
+    return Object.fromEntries(j.totalDataChart.map(([t, v]) => [dayKey(t * 1000), v]));
+  };
+  try {
+    const [usd, rf, rs, rt] = await Promise.all([series("pump", "dailyHoldersRevenue"),
+      series("pump.fun", "dailyRevenue"), series("pumpswap", "dailyRevenue"), series("terminal", "dailyRevenue")]);
+    const rev = {};
+    for (const k of Object.keys(rf)) if (k in rs && k in rt) rev[k] = rf[k] + rs[k] + rt[k];
+    const keep = o => Object.fromEntries(Object.entries(o).filter(([k]) => now - Date.parse(k) < 90 * 864e5));
+    state.llama = { fetchedAt: now, usd: keep(usd), rev: keep(rev) };
+  } catch { /* keep the old copy */ }
+  return state.llama || { usd: {}, rev: {} };
 }
 
 async function getPrices() {
@@ -538,8 +566,29 @@ if (process.argv.includes("--backfill-hours")) {
   }
   const offDays = off?.days || {};
 
+  // pump.fun's page has blocked automated reads before (Cloudflare challenge, 22/10/2026). While it
+  // does, days after the last complete copy come from the chain (supply drop between UTC midnights,
+  // exact) and DefiLlama (USD spent, revenue); today from the supply drop since midnight.
+  const blocked = off && now - off.fetchedAt > 2 * 3600e3;
+  const complete = k => off && Date.parse(k + "T00:00:00Z") + 864e5 <= off.fetchedAt;
+  state.altDays = state.altDays || {};
+  if (blocked) {
+    const llama = await llamaDaily(state, now);
+    const lastFull = Object.keys(offDays).filter(complete).sort().at(-1);
+    for (let k = shiftKey(lastFull, 1); k < todayKey; k = shiftKey(k, 1)) {
+      if (state.altDays[k]?.final) continue;
+      const t0 = Date.parse(k + "T00:00:00Z"), a = supplyAt(state.snaps, t0), b = supplyAt(state.snaps, t0 + 864e5);
+      if (a === null || b === null || a <= b) continue;
+      const pump = a - b, final = k in llama.usd;              // until DefiLlama has the day: priced at today's price
+      const usdv = final ? llama.usd[k] : pump * (prices.pump || 0);
+      state.altDays[k] = { pump, usd: usdv, sol: prices.sol ? usdv / prices.sol : 0, revenue: llama.rev[k] || 0, final };
+    }
+  }
+  for (const k of Object.keys(state.altDays)) if (now - Date.parse(k) > 60 * 864e5) delete state.altDays[k];
+
   const dayFor = k => {
-    if (offDays[k]) return { ...offDays[k], src: "pump.fun", key: k };
+    if (offDays[k] && (!off || complete(k) || !state.altDays[k])) return { ...offDays[k], src: "pump.fun", key: k };
+    if (state.altDays[k]) return { ...state.altDays[k], src: "chain", key: k };
     if (SEED[k]) return { ...SEED[k], sol: prices.sol ? SEED[k].usd / prices.sol : null, src: "offline", key: k };
     return { pump: null, usd: null, sol: null, src: null, key: k };
   };
@@ -559,7 +608,14 @@ if (process.argv.includes("--backfill-hours")) {
   const since = histKeys.length ? new Date(histKeys[0] + "T00:00:00Z")
     .toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : null;
 
-  const today = liveToday(off, todayKey, supply, prices);
+  let today = liveToday(off, todayKey, supply, prices);
+  if (!today && blocked) {
+    const a = supplyAt(state.snaps, Date.parse(todayKey + "T00:00:00Z"));
+    if (a !== null && a >= supply) {
+      const p = a - supply, u = p * (prices.pump || 0);
+      today = { pump: p, usd: u, sol: prices.sol ? u / prices.sol : 0 };
+    }
+  }
   const lastHour = lastHourFrom(state.snaps, now, supply, prices);
   const hourly = hourlyFromSnaps(state.snaps, now);
   // past days: pump.fun daily totals spread by on-chain timing (exact totals, no Mac uptime needed);
@@ -679,7 +735,7 @@ if (process.argv.includes("--backfill-hours")) {
       const x = side + i * colW + gap / 2, bw = colW - gap, cx = x + bw / 2;
       const h = d[m] ? (d[m] / vmax) * plotH : 0;
       const y = H - bottom - h;
-      const fill = d.src === "pump.fun" ? "#E3A857" : "#7A5C33";
+      const fill = d.src === "offline" ? "#7A5C33" : "#E3A857";
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}"/>` +
         (d[m] ? `<text x="${cx.toFixed(1)}" y="${(y - 4).toFixed(1)}" font-family="Menlo" font-size="7.5" fill="${grey}" text-anchor="middle">${big(d)}</text>` : "") +
         (d[o] ? `<text x="${cx.toFixed(1)}" y="${(y - 13).toFixed(1)}" font-family="Menlo" font-size="6.5" fill="${grey}" fill-opacity="0.7" text-anchor="middle">${small(d)}</text>` : "") +
@@ -734,5 +790,6 @@ if (process.argv.includes("--backfill-hours")) {
   console.log(`Open pump.fun burn page | href=https://pump.fun/pump-token ${F}`);
   console.log(`Burner wallet on Solscan | href=https://solscan.io/account/${BURNER} ${F}`);
   console.log(`Refresh | refresh=true ${F}`);
+  if (blocked) console.log(`pump.fun page blocked since ${new Date(off.fetchedAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}: recent days from chain + DefiLlama | ${F} color=#9AA0A7`);
   console.log(`Updated ${new Date().toLocaleTimeString()}  ·  pump.fun data ${off ? new Date(off.fetchedAt).toLocaleTimeString() : "unavailable"} | ${F} color=#5A6067`);
 })();

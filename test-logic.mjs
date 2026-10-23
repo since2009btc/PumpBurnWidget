@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 async function load(file, endMarker) {
   const src = readFileSync(file, 'utf8');
   const block = src.slice(src.indexOf('function fmt(n)'), src.indexOf(endMarker));
-  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg', 'fillGap', 'hourlyFromCounts'];
+  const names = ['fmt', 'usd', 'dayKey', 'shiftKey', 'parseOfficial', 'sumOf', 'liveToday', 'lastHourFrom', 'hourlyFromSnaps', 'paceVsAvg', 'fillGap', 'hourlyFromCounts', 'supplyAt'];
   return import('data:text/javascript,' + encodeURIComponent(`${block}\nexport { ${names.join(', ')} };`));
 }
 
@@ -23,7 +23,7 @@ for (const [label, file, end] of [
   ['iPhone', 'PumpBurnWidget.js', 'async function rpc('],
   ['Mac', 'mac/pumpburn.5m.js', 'const pad = '],
 ]) {
-  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg, fillGap, hourlyFromCounts } = await load(file, end);
+  const { fmt, usd, dayKey, shiftKey, parseOfficial, sumOf, liveToday, lastHourFrom, hourlyFromSnaps, paceVsAvg, fillGap, hourlyFromCounts, supplyAt } = await load(file, end);
   console.log(`\n=== ${label} (${file}) ===`);
 
   console.log('--- formatting ---');
@@ -102,6 +102,11 @@ for (const [label, file, end] of [
   ok('days counted', hc.n[0] === 2);
   ok('uncovered day skipped', hourlyFromCounts(offD, cnt, { from: Date.UTC(2026, 9, 8), to: nowH }, nowH, 60).n[0] === 1);
   ok('today never in the average', hourlyFromCounts({ ...offD, '2026-10-09': { pump: 1e12, usd: 1 } }, cnt, cov, nowH, 60).avg[0].pump < 1e7);
+
+  console.log('--- supply at a time ---');
+  const sn = [[1000, 5], [2000, 4], [4000, 3]];
+  ok('nearest reading within tolerance', supplyAt(sn, 2100, 500) === 4 && supplyAt(sn, 3100, 2000) === 3);
+  ok('none within tolerance -> null', supplyAt(sn, 10000, 500) === null);
 
   console.log('--- today vs 30-day pace ---');
   ok('at 06:00 UTC a quarter of the average is 100%', Math.round(paceVsAvg(50e6, 200e6, Date.UTC(2026, 9, 7, 6, 0))) === 100);
