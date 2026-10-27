@@ -576,10 +576,11 @@ if (process.argv.includes("--backfill-hours")) {
     const llama = await llamaDaily(state, now);
     const lastFull = Object.keys(offDays).filter(complete).sort().at(-1);
     for (let k = shiftKey(lastFull, 1); k < todayKey; k = shiftKey(k, 1)) {
-      if (state.altDays[k]?.final) continue;
+      if (state.altDays[k]?.final && state.altDays[k].usd > 0) continue;
       const t0 = Date.parse(k + "T00:00:00Z"), a = supplyAt(state.snaps, t0), b = supplyAt(state.snaps, t0 + 864e5);
       if (a === null || b === null || a <= b) continue;
-      const pump = a - b, final = k in llama.usd;              // until DefiLlama has the day: priced at today's price
+      // DefiLlama lists a day at 0 before computing it: until it has a real value, priced at today's price
+      const pump = a - b, final = llama.usd[k] > 0;
       const usdv = final ? llama.usd[k] : pump * (prices.pump || 0);
       state.altDays[k] = { pump, usd: usdv, sol: prices.sol ? usdv / prices.sol : 0, revenue: llama.rev[k] || 0, final };
     }
