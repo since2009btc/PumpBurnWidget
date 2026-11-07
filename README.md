@@ -11,7 +11,7 @@ home screen widget. No API key, no server, no account.
 
 **Mac (SwiftBar menu bar)**
 
-- PUMP and SOL price, with 1-day / 1-week / 1-month change, and the live burn rate
+- PUMP and SOL price, with 1-day / 1-week / 1-month change, and the live buyback rate
 - PUMP burned in the last hour, today, yesterday, last 7 / 30 days, last 3 / 6 months,
   each in PUMP, USD, SOL and % of supply
 - Average burn per hour, day, week, month, 3 months, 6 months and year
@@ -25,7 +25,7 @@ home screen widget. No API key, no server, no account.
 - PUMP burned today, with USD, SOL and the pace against the 30-day average (scaled to the time of day)
 - Yesterday, last 7 and last 30 days, in PUMP, USD and % of supply
 - Column chart of the last 30 days
-- Total burned, PUMP price and live burn rate
+- Total burned, PUMP price and live buyback rate
 
 ## Where the numbers come from
 
@@ -57,13 +57,19 @@ Published by pump.fun and verified on-chain:
 | | |
 |---|---|
 | PUMP mint (Token-2022) | `pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn` |
-| Burner wallet (primary) | `99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c` |
-| Burner wallet (secondary) | `9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM` |
+| Buyback wallet, pump.fun + PumpSwap (since 4 Nov 2026) | `2ifjKjqtETDeHXKsrRxeKWUuwUtXxNS4HepT6eftj6Qz` |
+| Buyback wallet, Trading Terminal (since 4 Nov 2026) | `78hoB7emUo7zF5kdNf9TFxzpLRKCy8Jgft5cu69Byuax` |
+| Earlier burner wallets (until 4 Nov 2026) | `99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c`, `9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM` |
 
-Each cycle is two transactions ~2 seconds apart: a market buy routed through
-Jupiter into the PumpSwap pool, then a `BurnChecked` on Token-2022 that
-permanently reduces the mint supply. The mint authority is `null`, so nothing
-can be re-issued.
+Since 4 Nov 2026 the pump fee program sweeps fees into the buyback wallets; each
+wallet buys PUMP through Jupiter and burns it in batches with `BurnChecked` on
+Token-2022, which permanently reduces the mint supply. Before that, each cycle
+was a buy followed by a burn ~2 seconds later. The mint authority is `null`, so
+nothing can be re-issued.
+
+The wallets' main addresses also receive address-poisoning spam (tiny transfers
+from look-alike addresses), so the widget counts activity on their PUMP token
+accounts, which only see the buys and burns.
 
 ## Install — Mac
 
@@ -119,8 +125,8 @@ get a free key at helius.dev:
   per day than now, so the PUMP averages sit above the recent daily pace.
 - **Last hour** needs a snapshot from about an hour ago, so it shows `—` for
   the first hour after the Mac wakes up.
-- **Burns/hr** is measured over the burner's last 300 transactions (about 15–20
-  minutes). **PUMP/hr** is the supply drop between the last two refreshes on
+- **Buys/hr** is measured over the buyback wallet's last 300 PUMP transactions
+  (a few hours). **PUMP/hr** is the supply drop between the last two refreshes on
   the Mac, and over the last two hours on the iPhone.
 - **Hourly chart.** No source publishes hourly figures, so the average is built
   from on-chain timing: each past day's pump.fun total is spread over the 24 hours

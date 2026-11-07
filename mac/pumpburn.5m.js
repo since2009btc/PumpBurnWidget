@@ -19,8 +19,13 @@
 const RPC      = process.env.PUMP_RPC || "https://api.mainnet-beta.solana.com";
 const MINT     = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
-const BURNER   = "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c";
-const BURNERS  = [BURNER, "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM"];
+// Since 2026-11-04 08:10 UTC the buyback runs from two new wallets (pump.fun + PumpSwap, Trading
+// Terminal). Their main addresses also receive address-poisoning spam, so activity is counted on
+// their PUMP token accounts, which only see the buys and burns. The two earlier wallets carry the history.
+const BURNER   = "2ifjKjqtETDeHXKsrRxeKWUuwUtXxNS4HepT6eftj6Qz";
+const BURNER_PUMP = "7rGfGqbxRH5GaVW7q3FoELfJ2qYF4wqKRtgmKysD7Zuu";   // BURNER's PUMP token account
+const BURNERS  = [BURNER_PUMP, "78TsNCAkm7iZvsjN3Df1pevrkymCGbP8xeMsVrPHJK4Z",
+  "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c", "9jHrTCwpDANHLNQz5cem6XLUBM8KiTWKe766Br6KVCXM"];
 const BACKFILL_HOURS = 72;
 const HOURLY_DAYS = 400;        // burner tx counts per hour kept this long (the whole history)
 const HOURLY_AVG_DAYS = 30;     // the hourly chart averages the last 30 days      // rebuild sleep gaps up to this far back (about 1 RPC call per 1,000 burner tx)
@@ -310,11 +315,11 @@ async function getPrices() {
 
 async function getBurnRate() {
   try {
-    const sigs = await rpc("getSignaturesForAddress", [BURNER, { limit: 300 }]);
-    const ts = sigs.map(s => s.blockTime).filter(Boolean).sort((a, b) => a - b);
+    const sigs = await rpc("getSignaturesForAddress", [BURNER_PUMP, { limit: 300 }]);
+    const ts = sigs.filter(s => !s.err).map(s => s.blockTime).filter(Boolean).sort((a, b) => a - b);
     if (ts.length < 20) return null;
     const hours = (ts[ts.length - 1] - ts[0]) / 3600;
-    return hours > 0 ? ts.length / hours / 2 : null;
+    return hours > 0 ? ts.length / hours : null;              // one buy per transaction, burns batched
   } catch { return null; }
 }
 
@@ -576,7 +581,9 @@ if (process.argv.includes("--backfill-hours")) {
     const llama = await llamaDaily(state, now);
     const lastFull = Object.keys(offDays).filter(complete).sort().at(-1);
     for (let k = shiftKey(lastFull, 1); k < todayKey; k = shiftKey(k, 1)) {
-      if (state.altDays[k]?.final && state.altDays[k].usd > 0) continue;
+      // a final day is still checked for a week: DefiLlama revises recent days (refill on 07/11/2026)
+      const had = state.altDays[k];
+      if (had?.final && had.usd > 0 && (now - Date.parse(k) > 8 * 864e5 || llama.usd[k] === had.usd)) continue;
       const t0 = Date.parse(k + "T00:00:00Z"), a = supplyAt(state.snaps, t0), b = supplyAt(state.snaps, t0 + 864e5);
       if (a === null || b === null || a <= b) continue;
       // DefiLlama lists a day at 0 before computing it: until it has a real value, priced at today's price
@@ -622,7 +629,9 @@ if (process.argv.includes("--backfill-hours")) {
   // past days: pump.fun daily totals spread by on-chain timing (exact totals, no Mac uptime needed);
   // today stays on the Mac's own readings
   if (state.hourCounts) {
-    const hc = hourlyFromCounts(offDays, state.hourCounts, state.counted, now, HOURLY_AVG_DAYS);
+    // every closed day the menu knows, pump.fun's or rebuilt from the chain while its page is blocked
+    const known = Object.fromEntries(lastN(HOURLY_AVG_DAYS).filter(d => d.pump !== null).map(d => [d.key, d]));
+    const hc = hourlyFromCounts(known, state.hourCounts, state.counted, now, HOURLY_AVG_DAYS);
     if (Math.max(...hc.n) > 0) { hourly.avg = hc.avg; hourly.n = hc.n; }
   }
 
@@ -658,7 +667,7 @@ if (process.argv.includes("--backfill-hours")) {
   const avgPrice = (k, unit) => { const d = offDays[k]; return d && d[unit] ? d.usd / d[unit] : null; };
   const chg = (cur, ref) => (cur && ref) ? (cur / ref - 1) * 100 : null;
   const rate = [];
-  if (cyclesHr) rate.push(`${Math.round(cyclesHr)} burns/hr`);
+  if (cyclesHr) rate.push(`${Math.round(cyclesHr)} buys/hr`);
   if (pumpHr) rate.push(`${fmt(pumpHr)} PUMP/hr`);
   const perf = (label, price, ch24, unit, dp, extra = "") => {
     if (!price) return;

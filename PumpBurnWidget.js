@@ -22,7 +22,7 @@ const RPC = "https://api.mainnet-beta.solana.com";
 
 const MINT     = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
-const BURNER   = "99mRw3EzdJZWEUjgp1nrU4WeHsukUBjbh7gYE7pm4F3c";
+const BURNER_PUMP = "7rGfGqbxRH5GaVW7q3FoELfJ2qYF4wqKRtgmKysD7Zuu";   // PUMP token account of the buyback wallet (since 2026-11-04)
 const TOTAL    = 1e12;             // PUMP nominal total supply
 const KEEP_DAYS = 3;               // local snapshots: only for the live rate
 const SHOW_RATE = true;            // set false to skip the burn-rate request
@@ -280,15 +280,15 @@ async function getOfficial() {
   }
 }
 
-/** Burn transactions per hour, measured over whatever window 300 signatures span. */
+/** Buyback transactions per hour, measured over whatever window 300 signatures span. */
 async function getBurnRate() {
   try {
-    const sigs = await rpc("getSignaturesForAddress", [BURNER, { limit: 300 }]);
-    const ts = sigs.map(s => s.blockTime).filter(Boolean).sort((a, b) => a - b);
+    const sigs = await rpc("getSignaturesForAddress", [BURNER_PUMP, { limit: 300 }]);
+    const ts = sigs.filter(s => !s.err).map(s => s.blockTime).filter(Boolean).sort((a, b) => a - b);
     if (ts.length < 20) return null;
     const hours = (ts[ts.length - 1] - ts[0]) / 3600;
     if (hours <= 0) return null;
-    return ts.length / hours / 2;              // two transactions per buy+burn cycle
+    return ts.length / hours;                  // one buy per transaction, burns batched
   } catch (e) {
     return null;
   }
@@ -451,7 +451,7 @@ function buildWidget(d) {
   const foot = [];
   if (d.prices.pump) foot.push("$" + d.prices.pump.toFixed(5) +
     (d.prices.pump24h !== null ? ` ${d.prices.pump24h >= 0 ? "+" : ""}${d.prices.pump24h.toFixed(1)}%` : ""));
-  if (d.cyclesHr) foot.push(Math.round(d.cyclesHr) + " burns/hr");
+  if (d.cyclesHr) foot.push(Math.round(d.cyclesHr) + " buys/hr");
   if (d.pumpHr) foot.push(fmt(d.pumpHr) + " PUMP/hr");
   foot.push(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
   num(w, foot.join("  ·  "), 11, C.faint);
